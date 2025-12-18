@@ -24,42 +24,50 @@ const mapProfileToUser = (profile: any): User => ({
 });
 
 /**
- * Gère les erreurs de Supabase pour éviter le bug [object Object] dans l'UI
+ * Gère les erreurs de Supabase de manière exhaustive
  */
 const handleError = (error: any) => {
   if (!error) return;
   
-  console.error("Supabase Error Details:", error);
+  console.error("DEBUG - Erreur Supabase capturée:", error);
 
-  // 1. Déjà une string
+  // 1. Si l'erreur est déjà un message texte
   if (typeof error === 'string') throw new Error(error);
 
-  // 2. Erreur Supabase avec message
+  // 2. Erreur d'authentification ou de base de données standard
   if (error.message) {
-    // Cas spécifique Email Invalid
-    if (error.message.includes("Email address") && error.message.includes("is invalid")) {
-      throw new Error("L'email est rejeté par Supabase. Allez dans Authentication > Settings et autorisez le domaine 'esp.sn' ou désactivez la confirmation d'email.");
+    let msg = error.message;
+    
+    // Traduction des erreurs courantes pour l'utilisateur
+    if (msg.includes("Email address") && msg.includes("invalid")) {
+      msg = "L'adresse email est refusée par le serveur. Vérifiez qu'il n'y a pas d'espaces et que le domaine @esp.sn est autorisé dans votre console Supabase (Authentication > Settings).";
+    } else if (msg.includes("row-level security")) {
+      msg = "Accès refusé par la base de données. Assurez-vous d'avoir exécuté le script SQL de déblocage (is_admin).";
+    } else if (msg.includes("User already registered")) {
+      msg = "Un utilisateur avec cet email existe déjà.";
+    } else if (msg.includes("Signup is disabled")) {
+      msg = "L'inscription est désactivée. Activez 'Enable email signup' dans Supabase.";
     }
-    // Cas RLS
-    if (error.message.includes("row-level security policy")) {
-      throw new Error("Accès refusé (RLS). Assurez-vous d'avoir exécuté le script SQL avec la fonction is_admin().");
-    }
-    throw new Error(error.message);
+    
+    throw new Error(msg);
   }
 
-  // 3. Fallback
-  try {
-    const detail = error.error_description || error.error || JSON.stringify(error);
-    if (detail !== '{}') throw new Error(`Détail : ${detail}`);
-  } catch (e) {}
+  // 3. Objet complexe (ex: PostgrestError)
+  if (error.details || error.hint) {
+    throw new Error(`${error.message || 'Erreur base de données'} : ${error.details || error.hint}`);
+  }
 
-  throw new Error("Une erreur inattendue est survenue.");
+  // 4. Fallback ultime
+  throw new Error("Une erreur inconnue empêche l'enregistrement. Vérifiez la console pour plus de détails.");
 };
 
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
+        email: email.trim(), 
+        password 
+      });
       if (authError) handleError(authError);
       if (!authData.user) throw new Error("Compte utilisateur introuvable.");
 
@@ -70,10 +78,10 @@ export const API = {
         .maybeSingle();
 
       if (fetchError) handleError(fetchError);
-      if (!profile) throw new Error("Profil non trouvé.");
+      if (!profile) throw new Error("Profil utilisateur manquant dans la base de données.");
       if (profile.is_active === false) {
         await supabase.auth.signOut();
-        throw new Error("Votre compte est suspendu.");
+        throw new Error("Votre compte est actuellement suspendu.");
       }
 
       return mapProfileToUser(profile);
@@ -115,9 +123,11 @@ export const API = {
     },
 
     createUser: async (user: any, adminName: string) => {
-      // 1. Création Auth
+      const cleanEmail = user.email.trim();
+      
+      // 1. Création du compte d'authentification
       const { data, error } = await supabase.auth.signUp({
-        email: user.email,
+        email: cleanEmail,
         password: 'passer25',
         options: { 
           data: { 
@@ -130,31 +140,36 @@ export const API = {
       
       if (error) handleError(error);
       
-      // 2. Création Profil forcée
+      // 2. Création Forcée du profil (UPSERT)
+      // Si l'utilisateur a été créé, on doit absolument créer sa ligne dans 'public.profiles'
       if (data.user) {
           const { error: profileError } = await supabase.from('profiles').upsert({
               id: data.user.id,
               full_name: user.name,
-              email: user.email,
+              email: cleanEmail,
               role: user.role.toLowerCase(),
               class_name: user.className,
               is_active: true,
               avatar_url: getInitialsAvatar(user.name)
-          });
+          }, { onConflict: 'id' });
           
           if (profileError) {
-              console.warn("Profil Error (peut-être déjà créé par trigger):", profileError.message);
+              console.error("ERREUR lors de la création du profil (upsert):", profileError);
+              handleError(profileError);
           }
           
-          await API.logs.add(adminName, 'Création Utilisateur', user.email, 'create');
+          await API.logs.add(adminName, 'Création Utilisateur', cleanEmail, 'create');
       }
       return data;
     },
 
     toggleUserStatus: async (adminName: string, userId: string) => {
-      const { data: current } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
-      const { error } = await supabase.from('profiles').update({ is_active: !current?.is_active }).eq('id', userId);
-      if (error) handleError(error);
+      const { data: current, error: fetchErr } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
+      if (fetchErr) handleError(fetchErr);
+      
+      const { error: updateErr } = await supabase.from('profiles').update({ is_active: !current?.is_active }).eq('id', userId);
+      if (updateErr) handleError(updateErr);
+      
       await API.logs.add(adminName, 'Modif Statut', userId, 'update');
     },
 
@@ -173,6 +188,8 @@ export const API = {
     },
 
     deleteUser: async (id: string, adminName: string = 'System') => {
+      // Note: Supprimer dans 'profiles' ne supprime pas l'auth user sans API Admin (service_role)
+      // Mais ici on supprime au moins les données publiques.
       const { error } = await supabase.from('profiles').delete().eq('id', id);
       if (error) handleError(error);
       await API.logs.add(adminName, 'Suppression Profil', id, 'delete');
@@ -180,7 +197,7 @@ export const API = {
 
     logout: async () => {
       const { error } = await supabase.auth.signOut();
-      if (error) console.warn("Logout error:", error.message);
+      if (error) console.warn("Erreur déconnexion:", error.message);
     }
   },
 
@@ -191,7 +208,7 @@ export const API = {
       return (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
     },
     create: async (name: string, email: string, adminName: string) => {
-      const { error } = await supabase.from('classes').insert({ name, email });
+      const { error } = await supabase.from('classes').insert({ name, email: email?.trim() });
       if (error) handleError(error);
       await API.logs.add(adminName, 'Création Classe', name, 'create');
     },
@@ -433,7 +450,7 @@ export const API = {
     },
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Non authentifié");
+      if (!user) throw new Error("Vous devez être connecté pour voter.");
 
       const { data: existingVote, error: voteFetchError } = await supabase.from('poll_votes').select('*').eq('poll_id', pollId).eq('user_id', user.id).maybeSingle();
       if (voteFetchError) handleError(voteFetchError);
@@ -452,7 +469,8 @@ export const API = {
       await supabase.from('poll_options').update({ votes: (newOpt?.votes || 0) + 1 }).eq('id', optionId);
     },
     toggleStatus: async (id: string) => {
-      const { data } = await supabase.from('polls').select('is_active').eq('id', id).single();
+      const { data, error: fErr } = await supabase.from('polls').select('is_active').eq('id', id).single();
+      if (fErr) handleError(fErr);
       const { error } = await supabase.from('polls').update({ is_active: !data?.is_active }).eq('id', id);
       if (error) handleError(error);
     },
@@ -536,7 +554,7 @@ export const API = {
     },
     add: async (actor: string, action: string, target: string, type: string) => {
       const { error } = await supabase.from('activity_logs').insert({ actor, action, target, type });
-      if (error) console.warn("Log error:", error.message);
+      if (error) console.warn("Erreur Log silencieuse:", error.message);
     }
   }
 };
