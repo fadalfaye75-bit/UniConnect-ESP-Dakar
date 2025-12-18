@@ -5,10 +5,10 @@ import { useNotification } from '../context/NotificationContext';
 import { API } from '../services/api';
 import { 
   Users, BookOpen, UserPlus, Search, Loader2, School, 
-  Lock, Plus, Trash2, LayoutDashboard, Shield, 
-  FileText, Ban, CheckCircle, RefreshCw, PenSquare, Activity, Calendar, Filter, Download
+  Plus, Trash2, LayoutDashboard, Shield, 
+  Ban, CheckCircle, PenSquare, Activity, Copy, Save
 } from 'lucide-react';
-import { UserRole, ClassGroup, ActivityLog } from '../types';
+import { UserRole, ClassGroup, ActivityLog, User } from '../types';
 import Modal from '../components/Modal';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -19,27 +19,21 @@ export default function AdminPanel() {
   const { addNotification } = useNotification();
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [classesList, setClassesList] = useState<ClassGroup[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Dashboard Stats
-  const [stats, setStats] = useState({
-    usersCount: 0,
-    classesCount: 0,
-    rolesData: [] as any[],
-    recentLogs: [] as ActivityLog[]
-  });
-
   // Modals
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [creatingUser, setCreatingUser] = useState(false);
-  const [newUser, setNewUser] = useState({ fullName: '', email: '', password: 'temporary-password-123', role: UserRole.STUDENT, className: '', schoolName: 'ESP Dakar' });
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  
+  const [newUser, setNewUser] = useState({ fullName: '', email: '', role: UserRole.STUDENT, className: '', schoolName: 'ESP Dakar' });
+  const [editingUser, setEditingUser] = useState<User | null>(null);
 
   const [isClassModalOpen, setIsClassModalOpen] = useState(false);
-  const [creatingClass, setCreatingClass] = useState(false);
   const [classFormData, setClassFormData] = useState({ id: '', name: '', email: '' });
   const [isEditClassMode, setIsEditClassMode] = useState(false);
 
@@ -57,54 +51,83 @@ export default function AdminPanel() {
             API.classes.list(),
             API.logs.list()
         ]);
-
         setUsers(usersData);
         setClassesList(classesData);
-        setLogs(logsData.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-
-        const rolesCount = { [UserRole.ADMIN]: 0, [UserRole.DELEGATE]: 0, [UserRole.STUDENT]: 0 };
-        usersData.forEach(u => { 
-            const role = (u.role as string).toUpperCase() as UserRole;
-            if (rolesCount[role] !== undefined) rolesCount[role]++; 
+        setLogs(logsData);
+    } catch(e: any) {
+        addNotification({ 
+          title: 'Erreur', 
+          message: e?.message || "Chargement échoué", 
+          type: 'alert' 
         });
-
-        setStats({
-            usersCount: usersData.length,
-            classesCount: classesData.length,
-            rolesData: [
-                { name: 'Étudiants', value: rolesCount[UserRole.STUDENT], color: '#3B82F6' },
-                { name: 'Délégués', value: rolesCount[UserRole.DELEGATE], color: '#10B981' },
-                { name: 'Admins', value: rolesCount[UserRole.ADMIN], color: '#8B5CF6' },
-            ],
-            recentLogs: logsData.slice(0, 10)
-        });
-
-    } catch(e) {
-        addNotification({ title: 'Erreur', message: 'Chargement des données échoué', type: 'alert' });
     } finally {
         setLoading(false);
     }
   };
 
+  const dashboardStats = useMemo(() => {
+    const rolesCount = { [UserRole.ADMIN]: 0, [UserRole.DELEGATE]: 0, [UserRole.STUDENT]: 0 };
+    users.forEach(u => { 
+        if (rolesCount[u.role] !== undefined) rolesCount[u.role]++; 
+    });
+    return {
+        usersCount: users.length,
+        classesCount: classesList.length,
+        rolesData: [
+            { name: 'Étudiants', value: rolesCount[UserRole.STUDENT], color: '#3B82F6' },
+            { name: 'Délégués', value: rolesCount[UserRole.DELEGATE], color: '#10B981' },
+            { name: 'Admins', value: rolesCount[UserRole.ADMIN], color: '#8B5CF6' },
+        ],
+        recentLogs: logs.slice(0, 10)
+    };
+  }, [users, classesList, logs]);
+
   // ACTIONS UTILISATEURS
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCreatingUser(true);
+    setSubmitting(true);
     try {
       await API.auth.createUser({
         name: newUser.fullName,
         email: newUser.email,
-        role: newUser.role.toLowerCase(),
-        className: newUser.className
+        role: newUser.role,
+        className: newUser.className,
+        schoolName: newUser.schoolName
       }, user?.name || 'Admin');
       
       await fetchGlobalData();
       setIsUserModalOpen(false);
-      setNewUser({ fullName: '', email: '', password: 'temporary-password-123', role: UserRole.STUDENT, className: '', schoolName: 'ESP Dakar' });
-      addNotification({ title: 'Utilisateur créé', message: 'Compte prêt.', type: 'success' });
+      setNewUser({ fullName: '', email: '', role: UserRole.STUDENT, className: '', schoolName: 'ESP Dakar' });
+      addNotification({ title: 'Succès', message: 'Utilisateur créé. MDP par défaut : passer25', type: 'success' });
     } catch (error: any) {
-      addNotification({ title: 'Erreur', message: error.message, type: 'alert' });
-    } finally { setCreatingUser(false); }
+      addNotification({ title: 'Erreur', message: error?.message || "Erreur de création", type: 'alert' });
+    } finally { setSubmitting(false); }
+  };
+
+  const handleOpenEditUser = (u: User) => {
+    setEditingUser(u);
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setSubmitting(true);
+    try {
+      await API.auth.updateProfile(editingUser.id, editingUser, user?.name);
+      await fetchGlobalData();
+      setIsEditModalOpen(false);
+      addNotification({ title: 'Succès', message: 'Profil mis à jour.', type: 'success' });
+    } catch (error: any) {
+      addNotification({ title: 'Erreur', message: error?.message || 'Échec de mise à jour.', type: 'alert' });
+    } finally { setSubmitting(false); }
+  };
+
+  const handleCopyUserDetails = (u: User) => {
+    const text = `UniConnect ESP Dakar\n-----------------\nNom: ${u.name}\nEmail: ${u.email}\nMot de passe par défaut: passer25\nRôle: ${u.role}\nClasse: ${u.className || 'N/A'}\nEtablissement: ${u.schoolName || 'ESP Dakar'}`;
+    navigator.clipboard.writeText(text).then(() => {
+      addNotification({ title: 'Copié', message: 'Coordonnées (avec MDP) copiées.', type: 'success' });
+    });
   };
 
   const handleToggleStatus = async (userId: string) => {
@@ -112,24 +135,20 @@ export default function AdminPanel() {
           await API.auth.toggleUserStatus(user?.name || 'Admin', userId);
           fetchGlobalData();
           addNotification({ title: 'Succès', message: 'Statut mis à jour.', type: 'info' });
-      } catch(e) { addNotification({ title: 'Erreur', message: "Échec.", type: 'alert' }); }
-  };
-
-  const handleResetPassword = async (userId: string) => {
-      if(!window.confirm("Réinitialiser le mot de passe ?")) return;
-      try {
-          await API.auth.resetUserPassword(user?.name || 'Admin', userId);
-          addNotification({ title: 'Succès', message: 'Lien de reset envoyé par mail.', type: 'success' });
-      } catch(e) { addNotification({ title: 'Erreur', message: "Échec.", type: 'alert' }); }
+      } catch(e: any) { 
+        addNotification({ title: 'Erreur', message: e?.message || "Échec.", type: 'alert' }); 
+      }
   };
 
   const handleDeleteUser = async (userId: string) => {
-      if(!window.confirm("Supprimer cet utilisateur ?")) return;
+      if(!window.confirm("Supprimer définitivement cet utilisateur ?")) return;
       try {
           await API.auth.deleteUser(userId, user?.name);
           fetchGlobalData();
-          addNotification({ title: 'Supprimé', message: 'Utilisateur retiré.', type: 'info' });
-      } catch(e) { addNotification({ title: 'Erreur', message: "Échec.", type: 'alert' }); }
+          addNotification({ title: 'Succès', message: 'Utilisateur supprimé.', type: 'info' });
+      } catch(e: any) { 
+        addNotification({ title: 'Erreur', message: e?.message || "Échec.", type: 'alert' }); 
+      }
   };
 
   // ACTIONS CLASSES
@@ -146,7 +165,7 @@ export default function AdminPanel() {
 
   const handleClassSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
-      setCreatingClass(true);
+      setSubmitting(true);
       try {
           if(isEditClassMode) {
               await API.classes.update(classFormData.id, { name: classFormData.name, email: classFormData.email }, user?.name || 'Admin');
@@ -155,19 +174,10 @@ export default function AdminPanel() {
           }
           await fetchGlobalData();
           setIsClassModalOpen(false);
-          addNotification({ title: 'Succès', message: 'Action effectuée.', type: 'success' });
-      } catch (error) {
-          addNotification({ title: 'Erreur', message: 'Opération échouée.', type: 'alert' });
-      } finally { setCreatingClass(false); }
-  };
-
-  const handleDeleteClass = async (id: string) => {
-      if(!window.confirm("Supprimer cette classe ?")) return;
-      try {
-          await API.classes.delete(id, user?.name || 'Admin');
-          fetchGlobalData();
-          addNotification({ title: 'Supprimée', message: 'Classe retirée.', type: 'warning' });
-      } catch (error) { addNotification({ title: 'Erreur', message: 'Échec suppression.', type: 'alert' }); }
+          addNotification({ title: 'Succès', message: 'Classe enregistrée.', type: 'success' });
+      } catch (error: any) {
+          addNotification({ title: 'Erreur', message: error?.message || 'Opération échouée.', type: 'alert' });
+      } finally { setSubmitting(false); }
   };
 
   const filteredUsers = useMemo(() => users.filter(u => 
@@ -175,16 +185,6 @@ export default function AdminPanel() {
     (u.email?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
     (u.className?.toLowerCase() || '').includes(searchTerm.toLowerCase())
   ), [users, searchTerm]);
-
-  const filteredLogs = useMemo(() => logs.filter(l => 
-    (l.actor?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-    (l.action?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-    (l.target?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-  ), [logs, searchTerm]);
-
-  if (loading && users.length === 0) return (
-      <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin text-primary-500" size={40} /></div>
-  );
 
   return (
     <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-140px)] animate-fade-in">
@@ -210,76 +210,62 @@ export default function AdminPanel() {
                  ))}
              </nav>
          </div>
-         
-         <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-6 text-white shadow-lg">
+         <div className="bg-gradient-to-br from-primary-600 to-primary-800 rounded-2xl p-5 text-white shadow-lg">
              <div className="flex items-center gap-2 mb-2">
-                 <Shield size={20} className="text-green-400" />
-                 <span className="font-bold text-sm">Système Sécurisé</span>
+                 <Shield size={18} className="text-primary-200" />
+                 <span className="font-bold text-xs uppercase">Sécurité Active</span>
              </div>
-             <p className="text-xs text-gray-400 leading-relaxed">Audit actif : toutes les modifications sont traçables.</p>
+             <p className="text-[10px] opacity-80 leading-relaxed">MDP par défaut : <strong>passer25</strong>.<br/>Note : Pensez à corriger les politiques RLS dans Supabase pour éviter la récursion.</p>
          </div>
       </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar pb-20">
          
-         {/* DASHBOARD TAB */}
          {activeTab === 'dashboard' && (
             <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Utilisateurs Totaux</p>
-                        <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{stats.usersCount}</h3>
-                        <div className="mt-2 flex items-center gap-1 text-[10px] text-green-500 font-bold uppercase"><CheckCircle size={10} /> Base active</div>
+                        <p className="text-xs font-bold text-gray-400 uppercase">Utilisateurs</p>
+                        <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{dashboardStats.usersCount}</h3>
+                        <div className="mt-2 flex items-center gap-1 text-[10px] text-green-500 font-bold uppercase"><CheckCircle size={10} /> Base synchronisée</div>
                     </div>
                     <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Classes Créées</p>
-                        <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{stats.classesCount}</h3>
-                        <div className="mt-2 flex items-center gap-1 text-[10px] text-blue-500 font-bold uppercase"><School size={10} /> DIC, Licence, Master</div>
+                        <p className="text-xs font-bold text-gray-400 uppercase">Classes</p>
+                        <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{dashboardStats.classesCount}</h3>
+                        <div className="mt-2 flex items-center gap-1 text-[10px] text-blue-500 font-bold uppercase"><School size={10} /> ESP Dakar</div>
                     </div>
                     <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Santé du Serveur</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase">Serveur</p>
                         <div className="flex items-center gap-2 mt-3">
-                            <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
-                            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Séquentiel OK</span>
+                            <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+                            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Opérationnel</span>
                         </div>
                     </div>
                 </div>
 
                 <div className="grid lg:grid-cols-2 gap-6">
                     <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Users size={18} /> Répartition des Rôles</h3>
+                        <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Users size={18} /> Rôles</h3>
                         <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
-                                    <Pie data={stats.rolesData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" animationDuration={1000}>
-                                        {stats.rolesData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                                    <Pie data={dashboardStats.rolesData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" animationDuration={1000}>
+                                        {dashboardStats.rolesData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                                     </Pie>
-                                    <RechartsTooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }} />
-                                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
+                                    <RechartsTooltip />
+                                    <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: '12px' }} />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
                     </div>
-
                     <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><Activity size={18} /> Journal Récent</h3>
-                            <button onClick={() => setActiveTab('logs')} className="text-xs font-bold text-primary-500 hover:underline">Voir tout</button>
-                        </div>
-                        <div className="space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-                            {stats.recentLogs.map(log => (
-                                <div key={log.id} className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/30 rounded-xl border border-transparent hover:border-gray-100 transition-colors">
-                                    <div className={`p-2 rounded-lg flex-shrink-0 ${
-                                        log.type === 'create' ? 'bg-blue-100 text-blue-600' : 
-                                        log.type === 'delete' ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'
-                                    }`}>
-                                        {log.type === 'create' ? <Plus size={14} /> : log.type === 'delete' ? <Trash2 size={14} /> : <PenSquare size={14} />}
-                                    </div>
-                                    <div>
-                                        <p className="text-xs font-bold text-gray-800 dark:text-white leading-tight">{log.action} : {log.target}</p>
-                                        <p className="text-[10px] text-gray-400 mt-1 uppercase">Par {log.actor} • {new Date(log.timestamp).toLocaleTimeString()}</p>
-                                    </div>
+                        <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Activity size={18} /> Logs récents</h3>
+                        <div className="space-y-4 max-h-[300px] overflow-y-auto">
+                            {dashboardStats.recentLogs.map(log => (
+                                <div key={log.id} className="text-xs p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600">
+                                    <div className="font-bold">{log.action}</div>
+                                    <div className="text-gray-400 mt-1">{new Date(log.timestamp).toLocaleString()} • Par {log.actor}</div>
                                 </div>
                             ))}
                         </div>
@@ -288,26 +274,25 @@ export default function AdminPanel() {
             </div>
          )}
          
-         {/* USERS TAB */}
          {activeTab === 'users' && (
              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
                  <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50/50 dark:bg-gray-800">
                      <div className="relative w-full md:w-80">
                          <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                         <input type="text" placeholder="Rechercher (nom, mail, classe)..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-300 outline-none" />
+                         <input type="text" placeholder="Recherche nom, mail..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 rounded-lg text-sm outline-none" />
                      </div>
-                     <button onClick={() => setIsUserModalOpen(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20 transition-transform active:scale-95">
-                         <UserPlus size={18} /> Créer un Utilisateur
+                     <button onClick={() => setIsUserModalOpen(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5">
+                         <UserPlus size={18} /> Créer un compte
                      </button>
                  </div>
                  <div className="overflow-x-auto">
                      <table className="w-full text-left text-sm">
-                         <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400 font-bold uppercase text-[10px] tracking-wider">
+                         <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 text-[10px] font-bold uppercase tracking-wider">
                              <tr>
                                  <th className="px-6 py-4">Utilisateur</th>
                                  <th className="px-6 py-4">Rôle</th>
                                  <th className="px-6 py-4">Classe</th>
-                                 <th className="px-6 py-4 text-center">Actions</th>
+                                 <th className="px-6 py-4 text-right">Actions</th>
                              </tr>
                          </thead>
                          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -317,8 +302,8 @@ export default function AdminPanel() {
                                          <div className="flex items-center gap-3">
                                              <img src={u.avatar} className={`w-9 h-9 rounded-full bg-gray-100 ${!u.isActive ? 'grayscale opacity-50' : ''}`} alt="" />
                                              <div className="min-w-0">
-                                                 <p className={`font-bold truncate ${!u.isActive ? 'text-gray-400 line-through' : 'text-gray-900 dark:text-white'}`}>{u.name}</p>
-                                                 <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                                                 <p className={`font-bold truncate ${!u.isActive ? 'text-gray-400' : 'text-gray-900 dark:text-white'}`}>{u.name}</p>
+                                                 <p className="text-[10px] text-gray-400 truncate">{u.email}</p>
                                              </div>
                                          </div>
                                      </td>
@@ -331,18 +316,19 @@ export default function AdminPanel() {
                                             {u.role}
                                         </span>
                                      </td>
-                                     <td className="px-6 py-4">
-                                         <span className="text-gray-600 dark:text-gray-300 font-medium text-xs">{u.className || '-'}</span>
-                                     </td>
+                                     <td className="px-6 py-4 text-gray-500 dark:text-gray-400 text-xs">{u.className || '-'}</td>
                                      <td className="px-6 py-4 text-right">
-                                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                             <button onClick={() => handleToggleStatus(u.id)} className={`p-2 rounded-lg transition-colors ${!u.isActive ? 'text-green-500 hover:bg-green-50' : 'text-orange-400 hover:bg-orange-50'}`} title={u.isActive ? 'Désactiver' : 'Réactiver'}>
+                                         <div className="flex items-center justify-end gap-1">
+                                             <button onClick={() => handleCopyUserDetails(u)} className="p-2 text-gray-400 hover:text-primary-500 transition-colors" title="Copier coordonnées">
+                                                 <Copy size={16} />
+                                             </button>
+                                             <button onClick={() => handleOpenEditUser(u)} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Modifier">
+                                                 <PenSquare size={16} />
+                                             </button>
+                                             <button onClick={() => handleToggleStatus(u.id)} className={`p-2 rounded-lg transition-colors ${!u.isActive ? 'text-green-500' : 'text-orange-400'}`} title={u.isActive ? 'Désactiver' : 'Réactiver'}>
                                                  {u.isActive ? <Ban size={16} /> : <CheckCircle size={16} />}
                                              </button>
-                                             <button onClick={() => handleResetPassword(u.id)} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg" title="Réinit MDP">
-                                                 <RefreshCw size={16} />
-                                             </button>
-                                             <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Supprimer">
+                                             <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Supprimer">
                                                  <Trash2 size={16} />
                                              </button>
                                          </div>
@@ -351,162 +337,143 @@ export default function AdminPanel() {
                              ))}
                          </tbody>
                      </table>
-                     {filteredUsers.length === 0 && <div className="p-12 text-center text-gray-400">Aucun utilisateur trouvé.</div>}
                  </div>
              </div>
          )}
 
-         {/* CLASSES TAB */}
          {activeTab === 'classes' && (
              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
                  <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800">
                      <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><School size={20} className="text-primary-500" /> Gestion des Classes</h3>
-                     <button onClick={() => openClassModal()} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20">
-                         <Plus size={18} /> Nouvelle Classe
-                     </button>
+                     <button onClick={() => openClassModal()} className="bg-primary-500 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-md">Ajouter une classe</button>
                  </div>
-                 <div className="overflow-x-auto">
-                     <table className="w-full text-left text-sm">
-                         <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400 font-bold uppercase text-[10px] tracking-wider">
-                             <tr>
-                                 <th className="px-6 py-4">Classe</th>
-                                 <th className="px-6 py-4">Email Groupe</th>
-                                 <th className="px-6 py-4 text-center">Effectif</th>
-                                 <th className="px-6 py-4 text-right">Actions</th>
-                             </tr>
-                         </thead>
-                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                             {classesList.map(cls => (
-                                 <tr key={cls.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors group">
-                                     <td className="px-6 py-4 font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                                        <div className="w-8 h-8 bg-primary-50 text-primary-500 rounded flex items-center justify-center font-black text-[10px]">{cls.name.split(' ')[0]}</div>
-                                        {cls.name}
-                                     </td>
-                                     <td className="px-6 py-4 text-gray-400 font-mono text-xs">{cls.email || 'Non défini'}</td>
-                                     <td className="px-6 py-4 text-center">
-                                         <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded font-bold text-xs">
-                                             {users.filter(u => u.className === cls.name).length} étudiants
-                                         </span>
-                                     </td>
-                                     <td className="px-6 py-4 text-right">
-                                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                             <button onClick={() => openClassModal(cls)} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg"><PenSquare size={16} /></button>
-                                             <button onClick={() => handleDeleteClass(cls.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
-                                         </div>
-                                     </td>
-                                 </tr>
-                             ))}
-                         </tbody>
-                     </table>
-                     {classesList.length === 0 && <div className="p-12 text-center text-gray-400">Aucune classe répertoriée.</div>}
+                 <div className="p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                     {classesList.map(cls => (
+                         <div key={cls.id} className="p-4 bg-gray-50 dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 group relative">
+                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => openClassModal(cls)} className="p-1.5 text-gray-400 hover:text-blue-500"><PenSquare size={14} /></button>
+                                <button onClick={() => API.classes.delete(cls.id, user?.name || 'Admin').then(fetchGlobalData)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                             </div>
+                             <h4 className="font-bold text-gray-900 dark:text-white">{cls.name}</h4>
+                             <p className="text-xs text-gray-400 mt-1">{cls.email || 'Pas d\'email collectif'}</p>
+                         </div>
+                     ))}
                  </div>
              </div>
          )}
 
-         {/* LOGS TAB */}
          {activeTab === 'logs' && (
-             <div className="space-y-4">
-                 <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                     <div className="relative w-80">
-                         <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                         <input type="text" placeholder="Filtrer le journal d'audit..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-700 border border-transparent focus:bg-white rounded-lg text-sm outline-none transition-all" />
-                     </div>
-                     <div className="flex gap-2">
-                         <button className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-4 py-2 rounded-lg text-sm font-bold text-gray-600 dark:text-gray-300"><Filter size={16} /> Filtres</button>
-                         <button className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-4 py-2 rounded-lg text-sm font-bold text-gray-600 dark:text-gray-300"><Download size={16} /> Exporter</button>
-                     </div>
-                 </div>
-
-                 <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
-                    <table className="w-full text-left text-sm">
-                         <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 font-bold uppercase text-[10px] tracking-wider">
-                             <tr>
-                                 <th className="px-6 py-4">Action</th>
-                                 <th className="px-6 py-4">Cible</th>
-                                 <th className="px-6 py-4">Acteur</th>
-                                 <th className="px-6 py-4">Date & Heure</th>
-                             </tr>
-                         </thead>
-                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                             {filteredLogs.map(log => (
-                                 <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                                     <td className="px-6 py-4">
-                                         <span className={`flex items-center gap-2 font-bold ${
-                                             log.type === 'delete' ? 'text-red-500' : 
-                                             log.type === 'create' ? 'text-blue-500' : 'text-gray-700 dark:text-gray-200'
-                                         }`}>
-                                             {log.action}
-                                         </span>
-                                     </td>
-                                     <td className="px-6 py-4 text-gray-500 dark:text-gray-400 italic text-xs">{log.target}</td>
-                                     <td className="px-6 py-4 font-bold text-gray-700 dark:text-white">{log.actor}</td>
-                                     <td className="px-6 py-4 text-gray-400 text-xs">
-                                         <div className="flex items-center gap-1.5"><Calendar size={12} /> {new Date(log.timestamp).toLocaleString()}</div>
-                                     </td>
-                                 </tr>
-                             ))}
-                         </tbody>
-                    </table>
-                 </div>
+             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
+                <table className="w-full text-left text-xs">
+                    <thead className="bg-gray-50 dark:bg-gray-700 font-bold uppercase text-gray-400">
+                        <tr>
+                            <th className="px-6 py-3">Date</th>
+                            <th className="px-6 py-3">Acteur</th>
+                            <th className="px-6 py-3">Action</th>
+                            <th className="px-6 py-3">Cible</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {logs.map(log => (
+                            <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
+                                <td className="px-6 py-3 text-gray-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
+                                <td className="px-6 py-3 font-bold text-gray-700 dark:text-gray-200">{log.actor}</td>
+                                <td className="px-6 py-3"><span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded uppercase font-bold text-[9px] border border-gray-200 dark:border-gray-600">{log.action}</span></td>
+                                <td className="px-6 py-3 italic text-gray-500 dark:text-gray-400">{log.target}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
              </div>
          )}
       </div>
 
-      {/* --- MODALS --- */}
-      <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Création d'Utilisateur">
+      {/* CREATE USER MODAL */}
+      <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Nouveau compte">
          <form onSubmit={handleCreateUser} className="space-y-4">
-            <div className="space-y-4">
-               <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nom Complet</label>
-                   <input required className="w-full p-2.5 rounded-lg border border-gray-300 bg-gray-50 dark:bg-gray-700 text-sm focus:ring-2 focus:ring-primary-300 outline-none dark:text-white" placeholder="Ex: Adama Diop" value={newUser.fullName} onChange={e => setNewUser({...newUser, fullName: e.target.value})} />
-               </div>
-               <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email Universitaire (@esp.sn)</label>
-                   <input required type="email" className="w-full p-2.5 rounded-lg border border-gray-300 bg-gray-50 dark:bg-gray-700 text-sm focus:ring-2 focus:ring-primary-300 outline-none dark:text-white" placeholder="adama.diop@esp.sn" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} />
-               </div>
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 text-[10px] text-blue-700 dark:text-blue-300 font-bold flex items-center gap-2 mb-2">
+                <Shield size={14} /> LE MOT DE PASSE PAR DÉFAUT SERA : passer25
             </div>
-            
+            <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nom Complet</label>
+                <input required className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" placeholder="Jean Dupont" value={newUser.fullName} onChange={e => setNewUser({...newUser, fullName: e.target.value})} />
+            </div>
+            <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email @esp.sn</label>
+                <input required type="email" className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" placeholder="jean.dupont@esp.sn" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} />
+            </div>
             <div className="grid grid-cols-2 gap-4">
                <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rôle Système</label>
-                   <select className="w-full p-2.5 rounded-lg border border-gray-300 bg-gray-50 dark:bg-gray-700 text-sm focus:ring-2 focus:ring-primary-300 outline-none dark:text-white" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}>
+                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rôle</label>
+                   <select className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}>
                        <option value={UserRole.STUDENT}>Étudiant</option>
                        <option value={UserRole.DELEGATE}>Délégué</option>
                        <option value={UserRole.ADMIN}>Administrateur</option>
                    </select>
                </div>
                <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Affectation Classe</label>
-                   <select className="w-full p-2.5 rounded-lg border border-gray-300 bg-gray-50 dark:bg-gray-700 text-sm focus:ring-2 focus:ring-primary-300 outline-none dark:text-white" value={newUser.className} onChange={e => setNewUser({...newUser, className: e.target.value})}>
-                        <option value="">Général / Aucun</option>
+                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Classe</label>
+                   <select className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={newUser.className} onChange={e => setNewUser({...newUser, className: e.target.value})}>
+                        <option value="">Aucune</option>
                         {classesList.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                    </select>
                </div>
             </div>
-
-            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-[10px] rounded-xl border border-blue-100 dark:border-blue-800 flex items-center gap-3">
-                <Shield size={20} className="flex-shrink-0" />
-                <p>Une notification automatique sera envoyée à l'utilisateur pour définir son accès personnel via Supabase Auth.</p>
-            </div>
-
-            <button disabled={creatingUser} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary-500/20 flex justify-center transition-all hover:scale-[1.02] active:scale-95">
-                {creatingUser ? <Loader2 className="animate-spin" /> : 'Initialiser le compte'}
+            <button disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl shadow-lg mt-4 disabled:opacity-50 transition-all hover:bg-primary-600">
+                {submitting ? <Loader2 className="animate-spin mx-auto" /> : 'Créer l\'utilisateur'}
             </button>
          </form>
       </Modal>
 
-      <Modal isOpen={isClassModalOpen} onClose={() => setIsClassModalOpen(false)} title={isEditClassMode ? "Modification Classe" : "Configuration de Classe"}>
+      {/* EDIT USER MODAL */}
+      <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Modifier le profil">
+         {editingUser && (
+             <form onSubmit={handleUpdateUser} className="space-y-4">
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nom Complet</label>
+                    <input required className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={editingUser.name} onChange={e => setEditingUser({...editingUser, name: e.target.value})} />
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Etablissement</label>
+                    <input className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={editingUser.schoolName || 'ESP Dakar'} onChange={e => setEditingUser({...editingUser, schoolName: e.target.value})} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                   <div>
+                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rôle</label>
+                       <select className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={editingUser.role} onChange={e => setEditingUser({...editingUser, role: e.target.value as UserRole})}>
+                           <option value={UserRole.STUDENT}>Étudiant</option>
+                           <option value={UserRole.DELEGATE}>Délégué</option>
+                           <option value={UserRole.ADMIN}>Administrateur</option>
+                       </select>
+                   </div>
+                   <div>
+                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Classe</label>
+                       <select className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={editingUser.className || ''} onChange={e => setEditingUser({...editingUser, className: e.target.value})}>
+                            <option value="">Aucune</option>
+                            {classesList.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                       </select>
+                   </div>
+                </div>
+                <button disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl shadow-lg mt-4 flex items-center justify-center gap-2 hover:bg-primary-600 transition-all">
+                    {submitting ? <Loader2 className="animate-spin" /> : <Save size={18} />}
+                    Enregistrer les modifications
+                </button>
+             </form>
+         )}
+      </Modal>
+
+      <Modal isOpen={isClassModalOpen} onClose={() => setIsClassModalOpen(false)} title={isEditClassMode ? "Editer Classe" : "Nouvelle Classe"}>
           <form onSubmit={handleClassSubmit} className="space-y-4">
               <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nom (Identifiant)</label>
-                  <input required className="w-full p-2.5 rounded-lg border border-gray-300 bg-gray-50 dark:bg-gray-700 text-sm focus:ring-2 focus:ring-primary-300 outline-none dark:text-white font-bold" placeholder="Ex: DIC 2 Informatique" value={classFormData.name} onChange={e => setClassFormData({...classFormData, name: e.target.value})} />
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nom de la classe</label>
+                  <input required className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={classFormData.name} onChange={e => setClassFormData({...classFormData, name: e.target.value})} />
               </div>
               <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email Institutionnel (Facultatif)</label>
-                  <input type="email" className="w-full p-2.5 rounded-lg border border-gray-300 bg-gray-50 dark:bg-gray-700 text-sm focus:ring-2 focus:ring-primary-300 outline-none dark:text-white" placeholder="delegue.dic2@esp.sn" value={classFormData.email} onChange={e => setClassFormData({...classFormData, email: e.target.value})} />
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email groupe</label>
+                  <input type="email" className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={classFormData.email} onChange={e => setClassFormData({...classFormData, email: e.target.value})} />
               </div>
-              <button disabled={creatingClass} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary-500/20 flex justify-center transition-all hover:scale-[1.02]">
-                  {creatingClass ? <Loader2 className="animate-spin" /> : (isEditClassMode ? 'Enregistrer les modifications' : 'Créer la structure')}
+              <button disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl mt-2 hover:bg-primary-600 transition-all shadow-md">
+                  {submitting ? <Loader2 className="animate-spin mx-auto" /> : 'Enregistrer'}
               </button>
           </form>
       </Modal>

@@ -20,13 +20,18 @@ export default function Login() {
     try {
       await login(email, password);
     } catch (err: any) {
-      console.error(err);
-      if (err.message.includes("Invalid login credentials")) {
+      console.error("Login catch:", err);
+      // On s'assure d'extraire un message textuel propre
+      const message = err?.message || String(err) || "Une erreur est survenue lors de la connexion.";
+      
+      if (message.includes("Invalid login credentials") || message.includes("invalid_credentials")) {
         setError("Identifiants invalides. Vérifiez votre email et mot de passe.");
-      } else if (err.message.includes("Database error")) {
+      } else if (message.includes("Database error")) {
         setError("Erreur de base de données. Veuillez contacter l'administrateur.");
+      } else if (message.includes("Profiles are viewable by everyone")) {
+         setError("Erreur de politique de sécurité. Veuillez patienter.");
       } else {
-        setError(err.message || "Une erreur est survenue lors de la connexion.");
+        setError(message);
       }
     } finally {
       setIsLoading(false);
@@ -50,9 +55,9 @@ export default function Login() {
         </div>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-50 text-red-600 text-sm rounded-xl flex items-center gap-3 border border-red-100">
+          <div className="mb-6 p-4 bg-red-50 text-red-600 text-sm rounded-xl flex items-center gap-3 border border-red-100 animate-in fade-in slide-in-from-top-1">
             <AlertCircle size={18} className="flex-shrink-0" /> 
-            <span>{error}</span>
+            <span className="flex-1">{error}</span>
           </div>
         )}
         
@@ -97,7 +102,7 @@ export default function Login() {
           <button 
             type="submit" 
             disabled={isLoading}
-            className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+            className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed active:scale-95"
           >
             {isLoading ? <Loader2 className="animate-spin" size={20} /> : 'Se Connecter'}
             {!isLoading && <ChevronRight size={18} />}
