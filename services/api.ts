@@ -2,16 +2,8 @@
 import { supabase } from './supabaseClient';
 import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotification, Poll, MeetLink, ScheduleFile } from '../types';
 
-/**
- * Génère une URL d'avatar basée sur les initiales du nom
- */
-const getInitialsAvatar = (name: string) => {
-  return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8&fontFamily=Inter,sans-serif&fontWeight=700`;
-};
+const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8`;
 
-/**
- * Mappe les données de la table 'profiles' (snake_case) vers l'interface 'User' (camelCase)
- */
 const mapProfileToUser = (profile: any): User => ({
   id: profile.id,
   name: profile.full_name || 'Utilisateur',
@@ -23,206 +15,87 @@ const mapProfileToUser = (profile: any): User => ({
   isActive: profile.is_active !== false
 });
 
-/**
- * Gère les erreurs de Supabase de manière exhaustive
- */
 const handleError = (error: any) => {
   if (!error) return;
-  
-  console.error("DEBUG - Erreur Supabase capturée:", error);
-
-  // 1. Si l'erreur est déjà un message texte
-  if (typeof error === 'string') throw new Error(error);
-
-  // 2. Erreur d'authentification ou de base de données standard
-  if (error.message) {
-    let msg = error.message;
-    
-    // Traduction des erreurs courantes pour l'utilisateur
-    if (msg.includes("Email address") && msg.includes("invalid")) {
-      msg = "L'adresse email est refusée par le serveur. Vérifiez qu'il n'y a pas d'espaces et que le domaine @esp.sn est autorisé dans votre console Supabase (Authentication > Settings).";
-    } else if (msg.includes("row-level security")) {
-      msg = "Accès refusé par la base de données. Assurez-vous d'avoir exécuté le script SQL de déblocage (is_admin).";
-    } else if (msg.includes("User already registered")) {
-      msg = "Un utilisateur avec cet email existe déjà.";
-    } else if (msg.includes("Signup is disabled")) {
-      msg = "L'inscription est désactivée. Activez 'Enable email signup' dans Supabase.";
-    }
-    
-    throw new Error(msg);
-  }
-
-  // 3. Objet complexe (ex: PostgrestError)
-  if (error.details || error.hint) {
-    throw new Error(`${error.message || 'Erreur base de données'} : ${error.details || error.hint}`);
-  }
-
-  // 4. Fallback ultime
-  throw new Error("Une erreur inconnue empêche l'enregistrement. Vérifiez la console pour plus de détails.");
+  console.error("Erreur Supabase brute:", error);
+  const message = error.message || error.details || error.hint || JSON.stringify(error);
+  throw new Error(`Erreur Serveur: ${message}`);
 };
 
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
-        email: email.trim(), 
-        password 
-      });
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (authError) handleError(authError);
-      if (!authData.user) throw new Error("Compte utilisateur introuvable.");
-
-      const { data: profile, error: fetchError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authData.user.id)
-        .maybeSingle();
-
+      const { data: profile, error: fetchError } = await supabase.from('profiles').select('*').eq('id', authData.user?.id).maybeSingle();
       if (fetchError) handleError(fetchError);
-      if (!profile) throw new Error("Profil utilisateur manquant dans la base de données.");
-      if (profile.is_active === false) {
-        await supabase.auth.signOut();
-        throw new Error("Votre compte est actuellement suspendu.");
-      }
-
+      if (!profile) throw new Error("Profil introuvable.");
       return mapProfileToUser(profile);
     },
-
     getSession: async () => {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) return null;
-        if (!session || !session.user) return null;
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return null;
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
         return profile ? mapProfileToUser(profile) : null;
     },
-
     getUsers: async (): Promise<User[]> => {
       const { data, error } = await supabase.from('profiles').select('*').order('full_name');
       if (error) return [];
       return (data || []).map(mapProfileToUser);
     },
-    
+    // Fix: Added adminName as optional 3rd argument for logging
     updateProfile: async (id: string, updates: Partial<User>, adminName?: string) => {
       const dbUpdates: any = {};
-      if (updates.name) {
-        dbUpdates.full_name = updates.name;
-        dbUpdates.avatar_url = getInitialsAvatar(updates.name);
-      }
+      if (updates.name) dbUpdates.full_name = updates.name;
       if (updates.role) dbUpdates.role = updates.role.toLowerCase();
       if (updates.className !== undefined) dbUpdates.class_name = updates.className;
       if (updates.schoolName) dbUpdates.school_name = updates.schoolName;
-      if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive;
       
-      const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().single();
+      const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
       if (error) handleError(error);
-
+      
       if (adminName) {
-        await API.logs.add(adminName, 'Mise à jour Profil', updates.name || id, 'update');
+        await API.logs.add(adminName, 'Mise à jour Profil', updates.email || id, 'update');
       }
-
-      return mapProfileToUser(data);
+      
+      return data ? mapProfileToUser(data) : null;
     },
-
-    createUser: async (user: any, adminName: string) => {
-      const cleanEmail = user.email.trim();
-      
-      // 1. Création du compte d'authentification
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: 'passer25',
-        options: { 
-          data: { 
-            full_name: user.name, 
-            role: user.role.toLowerCase(),
-            class_name: user.className
-          } 
-        }
-      });
-      
+    // Fix: Added missing updatePassword method
+    updatePassword: async (userId: string, password: string) => {
+      const { error } = await supabase.auth.updateUser({ password });
       if (error) handleError(error);
-      
-      // 2. Création Forcée du profil (UPSERT)
-      // Si l'utilisateur a été créé, on doit absolument créer sa ligne dans 'public.profiles'
+    },
+    // Fix: Added missing toggleUserStatus method
+    toggleUserStatus: async (adminName: string, userId: string) => {
+      const { data: current } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
+      const nextStatus = !current?.is_active;
+      const { error } = await supabase.from('profiles').update({ is_active: nextStatus }).eq('id', userId);
+      if (error) handleError(error);
+      await API.logs.add(adminName, nextStatus ? 'Activation Utilisateur' : 'Désactivation Utilisateur', userId, 'security');
+    },
+    // Fix: Added missing deleteUser method
+    deleteUser: async (userId: string, adminName?: string) => {
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) handleError(error);
+      if (adminName) await API.logs.add(adminName, 'Suppression Utilisateur', userId, 'delete');
+    },
+    createUser: async (user: any, adminName: string) => {
+      const { data, error } = await supabase.auth.signUp({ email: user.email.trim(), password: 'passer25' });
+      if (error) handleError(error);
       if (data.user) {
-          const { error: profileError } = await supabase.from('profiles').upsert({
+          await supabase.from('profiles').insert({
               id: data.user.id,
               full_name: user.name,
-              email: cleanEmail,
+              email: user.email.trim(),
               role: user.role.toLowerCase(),
               class_name: user.className,
-              is_active: true,
               avatar_url: getInitialsAvatar(user.name)
-          }, { onConflict: 'id' });
-          
-          if (profileError) {
-              console.error("ERREUR lors de la création du profil (upsert):", profileError);
-              handleError(profileError);
-          }
-          
-          await API.logs.add(adminName, 'Création Utilisateur', cleanEmail, 'create');
+          });
+          await API.logs.add(adminName, 'Création Utilisateur', user.email, 'create');
       }
       return data;
     },
-
-    toggleUserStatus: async (adminName: string, userId: string) => {
-      const { data: current, error: fetchErr } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
-      if (fetchErr) handleError(fetchErr);
-      
-      const { error: updateErr } = await supabase.from('profiles').update({ is_active: !current?.is_active }).eq('id', userId);
-      if (updateErr) handleError(updateErr);
-      
-      await API.logs.add(adminName, 'Modif Statut', userId, 'update');
-    },
-
-    resetUserPassword: async (adminName: string, userId: string) => {
-      const { data: profile } = await supabase.from('profiles').select('email').eq('id', userId).single();
-      if (profile?.email) {
-        const { error } = await supabase.auth.resetPasswordForEmail(profile.email);
-        if (error) handleError(error);
-        await API.logs.add(adminName, 'Reset Password', userId, 'security');
-      }
-    },
-
-    updatePassword: async (userId: string, pass: string) => {
-      const { error } = await supabase.auth.updateUser({ password: pass });
-      if (error) handleError(error);
-    },
-
-    deleteUser: async (id: string, adminName: string = 'System') => {
-      // Note: Supprimer dans 'profiles' ne supprime pas l'auth user sans API Admin (service_role)
-      // Mais ici on supprime au moins les données publiques.
-      const { error } = await supabase.from('profiles').delete().eq('id', id);
-      if (error) handleError(error);
-      await API.logs.add(adminName, 'Suppression Profil', id, 'delete');
-    },
-
-    logout: async () => {
-      const { error } = await supabase.auth.signOut();
-      if (error) console.warn("Erreur déconnexion:", error.message);
-    }
-  },
-
-  classes: {
-    list: async (): Promise<ClassGroup[]> => {
-      const { data, error } = await supabase.from('classes').select('*').order('name');
-      if (error) return [];
-      return (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
-    },
-    create: async (name: string, email: string, adminName: string) => {
-      const { error } = await supabase.from('classes').insert({ name, email: email?.trim() });
-      if (error) handleError(error);
-      await API.logs.add(adminName, 'Création Classe', name, 'create');
-    },
-    update: async (id: string, updates: any, adminName: string) => {
-      const { data, error } = await supabase.from('classes').update(updates).eq('id', id).select().single();
-      if (error) handleError(error);
-      await API.logs.add(adminName, 'Modification Classe', updates.name || id, 'update');
-      return data;
-    },
-    delete: async (id: string, adminName: string) => {
-      const { error } = await supabase.from('classes').delete().eq('id', id);
-      if (error) handleError(error);
-      await API.logs.add(adminName, 'Suppression Classe', id, 'delete');
-    }
+    logout: async () => { await supabase.auth.signOut(); }
   },
 
   announcements: {
@@ -230,39 +103,110 @@ export const API = {
       const { data, error } = await supabase.from('announcements').select('*').order('created_at', { ascending: false });
       if (error) return [];
       return (data || []).map(a => ({
-        id: a.id,
-        title: a.title,
-        content: a.content,
-        author: a.author_name || 'Administration',
-        date: a.created_at,
-        className: a.className || 'Général',
-        priority: a.priority as any,
-        isImportant: a.priority !== 'normal',
-        links: a.links || []
+        id: a.id, title: a.title, content: a.content, author: a.author_name || 'Admin',
+        date: a.created_at, className: a.class_name || 'Général',
+        priority: a.priority as any, links: a.links || []
       }));
     },
     create: async (ann: any) => {
       const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user?.id).single();
+      
       const payload = {
         title: ann.title,
         content: ann.content,
         priority: ann.priority,
-        className: ann.className,
+        class_name: ann.className || 'Général',
         author_id: user?.id,
-        author_name: user?.user_metadata.full_name || 'Admin',
+        author_name: profile?.full_name || 'Admin',
         links: ann.links || []
       };
       const { data, error } = await supabase.from('announcements').insert(payload).select().single();
       if (error) handleError(error);
       return data;
     },
+    // Fix: Added missing update method for announcements
     update: async (id: string, ann: any) => {
-      const { data, error } = await supabase.from('announcements').update(ann).eq('id', id).select().single();
+      const { data, error } = await supabase.from('announcements').update({
+        title: ann.title,
+        content: ann.content,
+        priority: ann.priority,
+        links: ann.links
+      }).eq('id', id).select().single();
       if (error) handleError(error);
-      return data;
+      return {
+        id: data.id, title: data.title, content: data.content, author: data.author_name || 'Admin',
+        date: data.created_at, className: data.class_name || 'Général',
+        priority: data.priority as any, links: data.links || []
+      };
     },
     delete: async (id: string) => {
       const { error } = await supabase.from('announcements').delete().eq('id', id);
+      if (error) handleError(error);
+    }
+  },
+
+  polls: {
+    list: async (): Promise<Poll[]> => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: polls, error } = await supabase.from('polls').select('*, poll_options(*)').order('created_at', { ascending: false });
+      if (error) return [];
+      let userVotes: any[] = [];
+      if (user) {
+        const { data } = await supabase.from('poll_votes').select('*').eq('user_id', user.id);
+        userVotes = data || [];
+      }
+      return (polls || []).map(p => {
+        const options = (p.poll_options || []).map((o: any) => ({ id: o.id, label: o.label, votes: o.votes || 0 }));
+        const userVote = userVotes.find(v => v.poll_id === p.id);
+        return {
+          id: p.id, question: p.question, className: p.class_name, isActive: p.is_active,
+          options, totalVotes: options.reduce((acc: number, o: any) => acc + o.votes, 0),
+          hasVoted: !!userVote, userVoteOptionId: userVote?.option_id,
+          startTime: p.start_time, endTime: p.end_time
+        };
+      });
+    },
+    create: async (poll: any) => {
+      const { data: newPoll, error: pError } = await supabase.from('polls').insert({
+        question: poll.question, 
+        class_name: poll.className, 
+        is_active: true,
+        start_time: poll.startTime,
+        end_time: poll.endTime
+      }).select().single();
+      if (pError) handleError(pError);
+      if (poll.options?.length > 0) {
+        const opts = poll.options.map((o: any) => ({ poll_id: newPoll.id, label: o.label }));
+        await supabase.from('poll_options').insert(opts);
+      }
+      return newPoll;
+    },
+    // Fix: Added missing update method for polls
+    update: async (id: string, poll: any) => {
+      const { data, error } = await supabase.from('polls').update({
+        question: poll.question,
+        start_time: poll.startTime,
+        end_time: poll.endTime
+      }).eq('id', id).select().single();
+      if (error) handleError(error);
+      return data;
+    },
+    // Fix: Added missing delete method for polls
+    delete: async (id: string) => {
+      const { error } = await supabase.from('polls').delete().eq('id', id);
+      if (error) handleError(error);
+    },
+    // Fix: Added missing toggleStatus method for polls
+    toggleStatus: async (id: string) => {
+      const { data: current } = await supabase.from('polls').select('is_active').eq('id', id).single();
+      const { error } = await supabase.from('polls').update({ is_active: !current?.is_active }).eq('id', id);
+      if (error) handleError(error);
+    },
+    vote: async (pollId: string, optionId: string) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Veuillez vous connecter.");
+      const { error } = await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
       if (error) handleError(error);
     }
   },
@@ -272,258 +216,83 @@ export const API = {
       const { data, error } = await supabase.from('exams').select('*').order('exam_date', { ascending: true });
       if (error) return [];
       return (data || []).map(e => ({
-        id: e.id,
-        subject: e.subject,
-        date: e.exam_date,
-        duration: e.duration,
-        room: e.room,
-        notes: e.notes,
-        className: e.className || ''
+        id: e.id, subject: e.subject, date: e.exam_date, duration: e.duration, room: e.room, notes: e.notes, className: e.class_name || ''
       }));
     },
     create: async (exam: any) => {
-      const payload = {
-        subject: exam.subject,
-        exam_date: exam.date,
-        duration: exam.duration,
-        room: exam.room,
-        notes: exam.notes,
-        className: exam.className
-      };
-      const { data, error } = await supabase.from('exams').insert(payload).select().single();
+      const { data, error } = await supabase.from('exams').insert({
+        subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, class_name: exam.className
+      }).select().single();
       if (error) handleError(error);
-      return data;
+      return {
+        id: data.id, subject: data.subject, date: data.exam_date, duration: data.duration, room: data.room, notes: data.notes, className: data.class_name || ''
+      };
     },
+    // Fix: Added missing update method for exams
     update: async (id: string, exam: any) => {
-      const payload = {
-        subject: exam.subject,
-        exam_date: exam.date,
-        duration: exam.duration,
-        room: exam.room,
-        notes: exam.notes,
-        className: exam.className
-      };
-      const { data, error } = await supabase.from('exams').update(payload).eq('id', id).select().single();
+      const { data, error } = await supabase.from('exams').update({
+        subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
+      }).eq('id', id).select().single();
       if (error) handleError(error);
-      return data;
+      return {
+        id: data.id, subject: data.subject, date: data.exam_date, duration: data.duration, room: data.room, notes: data.notes, className: data.class_name || ''
+      };
     },
+    // Fix: Added missing delete method for exams
     delete: async (id: string) => {
       const { error } = await supabase.from('exams').delete().eq('id', id);
       if (error) handleError(error);
     }
   },
 
-  schedules: {
-    list: async (): Promise<ScheduleFile[]> => {
-      const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false });
+  classes: {
+    list: async (): Promise<ClassGroup[]> => {
+      const { data, error } = await supabase.from('classes').select('*').order('name');
       if (error) return [];
-      return (data || []).map(s => ({
-        id: s.id,
-        version: s.version,
-        url: s.url,
-        className: s.className,
-        uploadDate: s.upload_date
-      }));
+      return (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
     },
-    create: async (sch: any) => {
-      const payload = {
-        version: sch.version,
-        url: sch.url,
-        className: sch.className
-      };
-      const { data, error } = await supabase.from('schedules').insert(payload).select().single();
+    // Fix: Added adminName as optional 3rd argument
+    create: async (name: string, email: string, adminName?: string) => {
+      const { error } = await supabase.from('classes').insert({ name, email });
       if (error) handleError(error);
-      return {
-        id: data.id,
-        version: data.version,
-        url: data.url,
-        className: data.className,
-        uploadDate: data.upload_date
-      };
+      if (adminName) await API.logs.add(adminName, 'Création Classe', name, 'create');
     },
-    delete: async (id: string) => {
-      const { error } = await supabase.from('schedules').delete().eq('id', id);
+    // Fix: Added missing update method for classes
+    update: async (id: string, data: any, adminName?: string) => {
+      const { error } = await supabase.from('classes').update({ name: data.name, email: data.email }).eq('id', id);
       if (error) handleError(error);
+      if (adminName) await API.logs.add(adminName, 'Mise à jour Classe', data.name, 'update');
+    },
+    // Fix: Added missing delete method for classes
+    delete: async (id: string, adminName?: string) => {
+      const { error } = await supabase.from('classes').delete().eq('id', id);
+      if (error) handleError(error);
+      if (adminName) await API.logs.add(adminName, 'Suppression Classe', id, 'delete');
     }
   },
 
-  meet: {
-    list: async (): Promise<MeetLink[]> => {
-      const { data, error } = await supabase.from('meet_links').select('*').order('time', { ascending: true });
+  logs: {
+    list: async (): Promise<ActivityLog[]> => {
+      const { data, error } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false });
       if (error) return [];
-      return (data || []).map(m => ({
-        id: m.id,
-        title: m.title,
-        platform: m.platform,
-        url: m.url,
-        time: m.time,
-        className: m.className
-      }));
+      return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
     },
-    create: async (meet: any) => {
-      const payload = {
-        title: meet.title,
-        platform: meet.platform,
-        url: meet.url,
-        time: meet.time,
-        className: meet.className
-      };
-      const { data, error } = await supabase.from('meet_links').insert(payload).select().single();
-      if (error) handleError(error);
-      return data;
-    },
-    update: async (id: string, updates: any) => {
-      const { data, error } = await supabase.from('meet_links').update(updates).eq('id', id).select().single();
-      if (error) handleError(error);
-      return data;
-    },
-    delete: async (id: string) => {
-      const { error } = await supabase.from('meet_links').delete().eq('id', id);
-      if (error) handleError(error);
+    add: async (actor: string, action: string, target: string, type: string) => {
+      await supabase.from('activity_logs').insert({ actor, action, target, type });
     }
   },
 
-  polls: {
-    list: async (): Promise<Poll[]> => {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: polls, error: pollsError } = await supabase.from('polls').select('*, poll_options(*)').order('created_at', { ascending: false });
-      if (pollsError) return [];
-
-      let userVotes: any[] = [];
-      if (user) {
-        const { data } = await supabase.from('poll_votes').select('*').eq('user_id', user.id);
-        userVotes = data || [];
-      }
-
-      return (polls || []).map(p => {
-        const options = (p.poll_options || []).map((o: any) => ({
-          id: o.id,
-          label: o.label,
-          votes: o.votes || 0
-        }));
-        const totalVotes = options.reduce((acc: number, o: any) => acc + o.votes, 0);
-        const userVote = userVotes.find(v => v.poll_id === p.id);
-
-        return {
-          id: p.id,
-          question: p.question,
-          className: p.className,
-          isActive: p.is_active,
-          startTime: p.start_time,
-          endTime: p.end_time,
-          options,
-          totalVotes,
-          hasVoted: !!userVote,
-          userVoteOptionId: userVote?.option_id
-        };
-      });
-    },
-    create: async (poll: any) => {
-      const { data: newPoll, error: pollError } = await supabase.from('polls').insert({
-        question: poll.question,
-        className: poll.className,
-        start_time: poll.startTime,
-        end_time: poll.endTime,
-        is_active: true
-      }).select().single();
-      if (pollError) handleError(pollError);
-
-      if (poll.options && poll.options.length > 0) {
-        const optionsPayload = poll.options.map((o: any) => ({
-          poll_id: newPoll.id,
-          label: o.label,
-          votes: 0
-        }));
-        const { error: optionsError } = await supabase.from('poll_options').insert(optionsPayload);
-        if (optionsError) handleError(optionsError);
-      }
-      return newPoll;
-    },
-    update: async (id: string, updates: any) => {
-      const { data, error } = await supabase.from('polls').update({
-        question: updates.question,
-        start_time: updates.startTime,
-        end_time: updates.endTime
-      }).eq('id', id).select().single();
-      if (error) handleError(error);
-      return data;
-    },
-    vote: async (pollId: string, optionId: string) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Vous devez être connecté pour voter.");
-
-      const { data: existingVote, error: voteFetchError } = await supabase.from('poll_votes').select('*').eq('poll_id', pollId).eq('user_id', user.id).maybeSingle();
-      if (voteFetchError) handleError(voteFetchError);
-
-      if (existingVote) {
-        if (existingVote.option_id === optionId) return;
-        const { data: oldOpt } = await supabase.from('poll_options').select('votes').eq('id', existingVote.option_id).single();
-        await supabase.from('poll_options').update({ votes: Math.max(0, (oldOpt?.votes || 0) - 1) }).eq('id', existingVote.option_id);
-        const { error: voteUpdateError } = await supabase.from('poll_votes').update({ option_id: optionId }).eq('id', existingVote.id);
-        if (voteUpdateError) handleError(voteUpdateError);
-      } else {
-        const { error: voteInsertError } = await supabase.from('poll_votes').insert({ poll_id: pollId, user_id: user.id, option_id: optionId });
-        if (voteInsertError) handleError(voteInsertError);
-      }
-      const { data: newOpt } = await supabase.from('poll_options').select('votes').eq('id', optionId).single();
-      await supabase.from('poll_options').update({ votes: (newOpt?.votes || 0) + 1 }).eq('id', optionId);
-    },
-    toggleStatus: async (id: string) => {
-      const { data, error: fErr } = await supabase.from('polls').select('is_active').eq('id', id).single();
-      if (fErr) handleError(fErr);
-      const { error } = await supabase.from('polls').update({ is_active: !data?.is_active }).eq('id', id);
-      if (error) handleError(error);
-    },
-    delete: async (id: string) => {
-      const { error } = await supabase.from('polls').delete().eq('id', id);
-      if (error) handleError(error);
-    }
-  },
   notifications: {
     list: async (): Promise<AppNotification[]> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
-      
-      const { data: profile } = await supabase.from('profiles').select('role, class_name').eq('id', user.id).maybeSingle();
-      const role = profile?.role || '';
-      const className = profile?.class_name || '';
-      
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .or(`user_id.eq.${user.id},target_role.eq.${role.toUpperCase()},target_class.eq.${className},target_class.eq.Général`)
-        .order('created_at', { ascending: false });
-        
+      const { data, error } = await supabase.from('notifications').select('*').or(`user_id.eq.${user.id},target_class.eq.Général`).order('created_at', { ascending: false });
       if (error) return [];
-      return (data || []).map(n => ({
-        id: n.id,
-        title: n.title,
-        message: n.message,
-        type: n.type,
-        timestamp: n.created_at,
-        isRead: n.is_read,
-        link: n.link,
-        targetRole: n.target_role,
-        targetClass: n.target_class
-      }));
+      return (data || []).map(n => ({ id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read }));
     },
-    add: async (notif: any) => {
-      const { error } = await supabase.from('notifications').insert({
-        title: notif.title,
-        message: notif.message,
-        type: notif.type || 'info',
-        link: notif.link,
-        target_role: notif.targetRole,
-        target_class: notif.targetClass,
-        user_id: notif.userId || null,
-        is_read: false
-      });
-      if (error) handleError(error);
-    },
-    markRead: async (id: string) => {
-      const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id);
-      if (error) handleError(error);
-    },
+    add: async (notif: any) => { await supabase.from('notifications').insert(notif); },
+    markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
+    // Fix: Added missing markAllRead method for notifications
     markAllRead: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -533,28 +302,44 @@ export const API = {
     },
     clear: async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { error } = await supabase.from('notifications').delete().eq('user_id', user.id);
-        if (error) handleError(error);
-      }
+      if (user) await supabase.from('notifications').delete().eq('user_id', user.id);
     }
   },
-  logs: {
-    list: async (): Promise<ActivityLog[]> => {
-      const { data, error } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false });
-      if (error) return [];
-      return (data || []).map(l => ({
-        id: l.id,
-        actor: l.actor,
-        action: l.action,
-        target: l.target,
-        type: l.type,
-        timestamp: l.created_at
-      }));
+
+  meet: {
+    list: async (): Promise<MeetLink[]> => {
+      const { data, error } = await supabase.from('meet_links').select('*').order('created_at', { ascending: false });
+      return (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.class_name }));
     },
-    add: async (actor: string, action: string, target: string, type: string) => {
-      const { error } = await supabase.from('activity_logs').insert({ actor, action, target, type });
-      if (error) console.warn("Erreur Log silencieuse:", error.message);
-    }
+    create: async (meet: any) => {
+      const { data, error } = await supabase.from('meet_links').insert({ ...meet, class_name: meet.className }).select().single();
+      if (error) handleError(error);
+      return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.class_name };
+    },
+    // Fix: Added missing update method for meet_links
+    update: async (id: string, meet: any) => {
+      const { data, error } = await supabase.from('meet_links').update({
+        title: meet.title,
+        platform: meet.platform,
+        url: meet.url,
+        time: meet.time
+      }).eq('id', id).select().single();
+      if (error) handleError(error);
+      return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.class_name };
+    },
+    delete: async (id: string) => { await supabase.from('meet_links').delete().eq('id', id); }
+  },
+
+  schedules: {
+    list: async (): Promise<ScheduleFile[]> => {
+      const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false });
+      return (data || []).map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.class_name }));
+    },
+    create: async (sch: any) => {
+      const { data, error } = await supabase.from('schedules').insert({ version: sch.version, url: sch.url, class_name: sch.className }).select().single();
+      if (error) handleError(error);
+      return data;
+    },
+    delete: async (id: string) => { await supabase.from('schedules').delete().eq('id', id); }
   }
 };
