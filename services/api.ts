@@ -1,13 +1,52 @@
 
+/**
+ * DOCUMENTATION SQL DE MAINTENANCE - UNICONNECT
+ * 
+ * 1. RÉCURSION INFINIE (Profiles RLS) - EXECUTER EN PREMIER :
+ * DROP POLICY IF EXISTS "Propriétaire : Tout" ON profiles;
+ * DROP POLICY IF EXISTS "Admin : Tout" ON profiles;
+ * 
+ * CREATE OR REPLACE FUNCTION public.check_is_admin()
+ * RETURNS boolean AS $$
+ * BEGIN
+ *   RETURN (SELECT (role = 'admin') FROM public.profiles WHERE id = auth.uid());
+ * END;
+ * $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+ * 
+ * CREATE POLICY "Propriétaire : Tout" ON profiles FOR ALL USING (auth.uid() = id);
+ * CREATE POLICY "Admin : Tout" ON profiles FOR ALL USING (public.check_is_admin());
+ * 
+ * 2. STOCKAGE - CRÉATION DES BUCKETS :
+ * INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true) ON CONFLICT DO NOTHING;
+ * INSERT INTO storage.buckets (id, name, public) VALUES ('schedules', 'schedules', true) ON CONFLICT DO NOTHING;
+ * INSERT INTO storage.buckets (id, name, public) VALUES ('announcements', 'announcements', true) ON CONFLICT DO NOTHING;
+ * 
+ * 3. POLITIQUES DE STOCKAGE (storage.objects) :
+ * DROP POLICY IF EXISTS "Lecture publique pour tous" ON storage.objects;
+ * DROP POLICY IF EXISTS "Upload Avatars Authentifié" ON storage.objects;
+ * DROP POLICY IF EXISTS "Admin/Délégués Gèrent Fichiers" ON storage.objects;
+ * 
+ * CREATE POLICY "Lecture publique pour tous" ON storage.objects FOR SELECT USING (true);
+ * 
+ * CREATE POLICY "Upload Avatars Authentifié" ON storage.objects FOR INSERT 
+ * WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
+ * 
+ * CREATE POLICY "Admin/Délégués Gèrent Fichiers" ON storage.objects FOR ALL 
+ * USING (
+ *   (bucket_id IN ('schedules', 'announcements')) 
+ *   AND (public.check_is_admin() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delegate'))
+ * );
+ */
+
 import { createClient } from '@supabase/supabase-js';
 import { supabase, supabaseUrl, supabaseKey } from './supabaseClient';
 import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotification, Poll, MeetLink, ScheduleFile } from '../types';
 
 const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8`;
 
-// Cache intelligent avec invalidation ciblée
+// Cache ultra-rapide pour éviter les requêtes inutiles
 const CACHE: Record<string, { data: any, timestamp: number }> = {};
-const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+const CACHE_TTL = 60 * 1000; 
 
 const getCached = (key: string) => {
     const entry = CACHE[key];
@@ -43,7 +82,7 @@ const mapAnnouncement = (a: any): Announcement => {
     title: a.title,
     content: a.content || '',
     author: a.author_name || 'Anonyme',
-    date: a.created_at,
+    date: a.created_at || new Date().toISOString(),
     className: a.classname || 'Général',
     priority: priority as any,
     isImportant: priority === 'important' || priority === 'urgent',
@@ -51,22 +90,30 @@ const mapAnnouncement = (a: any): Announcement => {
   };
 };
 
-const handleError = (error: any) => {
-  if (!error) return;
-  console.error("--- SUPABASE ERROR DETAILS ---", error);
-  throw new Error(error.message || "Erreur de connexion serveur.");
-};
-
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (authError) handleError(authError);
+      // Nettoyage de l'email
+      const cleanEmail = email.trim().toLowerCase();
+      
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
+        email: cleanEmail, 
+        password 
+      });
+      
+      if (authError) {
+        // On renvoie l'objet d'erreur de Supabase pour que le front puisse le traiter
+        throw authError;
+      }
       
       const { data: profile, error: fetchError } = await supabase.from('profiles')
         .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
         .eq('id', authData.user?.id).maybeSingle();
-      if (fetchError) handleError(fetchError);
+        
+      if (fetchError) throw fetchError;
+      if (!profile) throw new Error("Profil non trouvé. Contactez l'administrateur.");
+      if (profile.is_active === false) throw new Error("Votre compte a été désactivé.");
+      
       return mapProfileToUser(profile);
     },
 
@@ -93,30 +140,31 @@ export const API = {
       return users;
     },
 
-    updateProfile: async (id: string, updates: Partial<User>, adminName?: string) => {
+    updateProfile: async (id: string, updates: Partial<User>) => {
       const dbUpdates: any = {};
       if (updates.name) dbUpdates.full_name = updates.name;
       if (updates.role) dbUpdates.role = updates.role.toLowerCase();
       if (updates.className !== undefined) dbUpdates.classname = updates.className;
       if (updates.schoolName !== undefined) dbUpdates.school_name = updates.schoolName;
+      if (updates.avatar) dbUpdates.avatar_url = updates.avatar;
       
       const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
-      if (error) handleError(error);
+      if (error) throw error;
       invalidateCache('users_list');
       return data ? mapProfileToUser(data) : null;
     },
 
-    createUser: async (user: any, adminName: string) => {
+    createUser: async (user: any) => {
       const tempClient = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
       const { data, error } = await tempClient.auth.signUp({ 
-        email: user.email.trim(), 
+        email: user.email.trim().toLowerCase(), 
         password: 'passer25',
         options: { data: { full_name: user.name, role: user.role.toLowerCase() } }
       });
-      if (error) handleError(error);
+      if (error) throw error;
       if (data.user) {
           await supabase.from('profiles').upsert({
-              id: data.user.id, full_name: user.name, email: user.email.trim(),
+              id: data.user.id, full_name: user.name, email: user.email.trim().toLowerCase(),
               role: user.role.toLowerCase(), classname: user.className || '',
               is_active: true, avatar_url: getInitialsAvatar(user.name)
           });
@@ -125,33 +173,36 @@ export const API = {
       return data;
     },
     logout: async () => { await supabase.auth.signOut(); },
-
     updatePassword: async (id: string, pass: string) => {
       const { error } = await supabase.auth.updateUser({ password: pass });
-      if (error) handleError(error);
+      if (error) throw error;
     },
-
-    toggleUserStatus: async (adminName: string, userId: string) => {
+    toggleUserStatus: async (userId: string) => {
       const { data: p } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
       const { error } = await supabase.from('profiles').update({ is_active: !p?.is_active }).eq('id', userId);
-      if (error) handleError(error);
+      if (error) throw error;
       invalidateCache('users_list');
     },
-
-    deleteUser: async (userId: string, adminName?: string) => {
+    deleteUser: async (userId: string) => {
       const { error } = await supabase.from('profiles').delete().eq('id', userId);
-      if (error) handleError(error);
+      if (error) throw error;
       invalidateCache('users_list');
     }
   },
 
   announcements: {
     list: async (limit = 20): Promise<Announcement[]> => {
+      const selectStr = 'id, title, content, author_name, created_at, classname, priority';
       const { data, error } = await supabase.from('announcements')
-        .select('id, title, content, author_name, created_at, classname, priority')
-        .order('created_at', { ascending: false }) // Aligné sur idx_announcements_created_at
+        .select(selectStr)
+        .order('created_at', { ascending: false, nullsFirst: false })
         .limit(limit);
-      if (error) return [];
+      
+      if (error && error.code === '42703') { 
+        const { data: fallbackData } = await supabase.from('announcements').select(selectStr).limit(limit);
+        return (fallbackData || []).map(mapAnnouncement);
+      }
+      
       return (data || []).map(mapAnnouncement);
     },
     create: async (ann: any) => {
@@ -161,27 +212,36 @@ export const API = {
         title: ann.title, content: ann.content, priority: ann.priority,
         classname: ann.className || 'Général', author_id: user?.id, author_name: profile?.full_name || 'Admin'
       }).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return mapAnnouncement(data);
     },
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
         title: ann.title, content: ann.content, priority: ann.priority, classname: ann.className
       }).eq('id', id).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return mapAnnouncement(data);
     },
     delete: async (id: string) => { await supabase.from('announcements').delete().eq('id', id); }
   },
 
   polls: {
-    list: async (): Promise<Poll[]> => {
+    list: async (limit = 10): Promise<Poll[]> => {
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: polls, error } = await supabase.from('polls')
-        .select('id, question, classname, is_active, start_time, end_time, poll_options(id, label, votes)')
-        .order('created_at', { ascending: false }) // Aligné sur idx_polls_created_at
-        .limit(15);
-      if (error) return [];
+      const selectStr = 'id, question, classname, is_active, start_time, end_time, created_at, poll_options(id, label, votes)';
+      
+      let { data: polls, error } = await supabase.from('polls')
+        .select(selectStr)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      
+      if (error && error.code === '42703') {
+        const { data: fallbackData } = await supabase.from('polls').select(selectStr).limit(limit);
+        polls = fallbackData;
+      }
+      
+      if (!polls) return [];
+      
       let userVotes: any[] = [];
       if (user) {
         const { data } = await supabase.from('poll_votes').select('poll_id, option_id').eq('user_id', user.id);
@@ -210,19 +270,15 @@ export const API = {
     },
     delete: async (id: string) => { await supabase.from('polls').delete().eq('id', id); },
     update: async (id: string, p: any) => {
-      const { error } = await supabase.from('polls').update({
-        question: p.question, start_time: p.startTime, end_time: p.endTime
-      }).eq('id', id);
-      if (error) handleError(error);
+      await supabase.from('polls').update({ question: p.question, start_time: p.startTime, end_time: p.endTime }).eq('id', id);
     },
     create: async (p: any) => {
       const { data: poll, error: pollErr } = await supabase.from('polls').insert({
         question: p.question, classname: p.className, is_active: true, start_time: p.startTime, end_time: p.endTime
       }).select().single();
-      if (pollErr) handleError(pollErr);
+      if (pollErr) throw pollErr;
       const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
-      const { error: optErr } = await supabase.from('poll_options').insert(options);
-      if (optErr) handleError(optErr);
+      await supabase.from('poll_options').insert(options);
       return poll;
     }
   },
@@ -231,7 +287,7 @@ export const API = {
     list: async (limit = 20): Promise<Exam[]> => {
       const { data, error } = await supabase.from('exams')
         .select('id, subject, exam_date, duration, room, notes, classname')
-        .order('exam_date', { ascending: true }) // Aligné sur idx_exams_exam_date
+        .order('exam_date', { ascending: true })
         .limit(limit);
       if (error) return [];
       return (data || []).map(e => ({
@@ -242,14 +298,14 @@ export const API = {
       const { data, error } = await supabase.from('exams').insert({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className
       }).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return { ...exam, id: data.id };
     },
     update: async (id: string, exam: any) => {
       const { data, error } = await supabase.from('exams').update({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
       }).eq('id', id).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return { ...exam, id: data.id };
     },
     delete: async (id: string) => { await supabase.from('exams').delete().eq('id', id); }
@@ -265,33 +321,41 @@ export const API = {
       setCache('classes_list', classes);
       return classes;
     },
-    update: async (id: string, cls: any, adminName: string) => {
-      const { error } = await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
-      if (error) handleError(error);
+    update: async (id: string, cls: any) => {
+      await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
       invalidateCache('classes_list');
     },
-    create: async (name: string, email: string, adminName: string) => {
-      const { error } = await supabase.from('classes').insert({ name, email });
-      if (error) handleError(error);
+    create: async (name: string, email: string) => {
+      await supabase.from('classes').insert({ name, email });
       invalidateCache('classes_list');
     },
-    delete: async (id: string, adminName: string) => {
-      const { error } = await supabase.from('classes').delete().eq('id', id);
-      if (error) handleError(error);
+    delete: async (id: string) => {
+      await supabase.from('classes').delete().eq('id', id);
       invalidateCache('classes_list');
     }
   },
 
   notifications: {
-    list: async (): Promise<AppNotification[]> => {
+    list: async (limit = 20): Promise<AppNotification[]> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
-      const { data, error } = await supabase.from('notifications')
-        .select('id, title, message, type, created_at, is_read')
+      const selectStr = 'id, title, message, type, created_at, is_read';
+      
+      let { data, error } = await supabase.from('notifications')
+        .select(selectStr)
         .or(`user_id.eq.${user.id},target_class.eq.Général`)
-        .order('created_at', { ascending: false }) // Aligné sur idx_notifications_created_at
-        .limit(20);
-      if (error) return [];
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      
+      if (error && error.code === '42703') {
+        const { data: fallbackData } = await supabase.from('notifications')
+            .select(selectStr)
+            .or(`user_id.eq.${user.id},target_class.eq.Général`)
+            .limit(limit);
+        data = fallbackData;
+      }
+      
+      if (!data) return [];
       return (data || []).map(n => ({ id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read }));
     },
     markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
@@ -314,7 +378,7 @@ export const API = {
 
   meet: {
     list: async (): Promise<MeetLink[]> => {
-      const { data, error } = await supabase.from('meet_links').select('id, title, platform, url, time, classname').order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('meet_links').select('id, title, platform, url, time, classname');
       if (error) return [];
       return (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
     },
@@ -322,14 +386,14 @@ export const API = {
       const { data, error } = await supabase.from('meet_links').insert({
         title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className
       }).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
     },
     update: async (id: string, m: any) => {
       const { data, error } = await supabase.from('meet_links').update({
         title: m.title, platform: m.platform, url: m.url, time: m.time
       }).eq('id', id).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
     },
     delete: async (id: string) => { await supabase.from('meet_links').delete().eq('id', id); }
@@ -345,16 +409,26 @@ export const API = {
       const { data, error } = await supabase.from('schedules').insert({
         version: sch.version, url: sch.url, classname: sch.className
       }).select().single();
-      if (error) handleError(error);
+      if (error) throw error;
       return { id: data.id, version: data.version, uploadDate: data.upload_date, url: data.url, className: data.classname };
     },
     delete: async (id: string) => { await supabase.from('schedules').delete().eq('id', id); }
   },
 
   logs: {
-    list: async (): Promise<ActivityLog[]> => {
-      const { data, error } = await supabase.from('activity_logs').select('id, actor, action, target, type, created_at').order('created_at', { ascending: false }).limit(50);
-      if (error) return [];
+    list: async (limit = 50): Promise<ActivityLog[]> => {
+      const selectStr = 'id, actor, action, target, type, created_at';
+      let { data, error } = await supabase.from('activity_logs')
+        .select(selectStr)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      
+      if (error && error.code === '42703') {
+        const { data: fallbackData } = await supabase.from('activity_logs').select(selectStr).limit(limit);
+        data = fallbackData;
+      }
+      
+      if (!data) return [];
       return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
     },
     add: async (actor: string, action: string, target: string, type: string) => {

@@ -18,18 +18,34 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      // Nettoyage des entrées
+      const cleanEmail = email.trim().toLowerCase();
+      await login(cleanEmail, password);
     } catch (err: any) {
-      console.error("Login catch:", err);
-      // On s'assure d'extraire un message textuel propre
-      const message = err?.message || String(err) || "Une erreur est survenue lors de la connexion.";
+      console.error("Erreur de connexion détaillée:", err);
       
+      let message = "Une erreur est survenue lors de la connexion.";
+      
+      // Extraction robuste du message d'erreur de Supabase
+      if (err?.error_description) {
+        message = err.error_description;
+      } else if (err?.message) {
+        message = err.message;
+      } else if (typeof err === 'string') {
+        message = err;
+      } else if (err?.error?.message) {
+        message = err.error.message;
+      }
+
+      // Traductions conviviales pour l'utilisateur
       if (message.includes("Invalid login credentials") || message.includes("invalid_credentials")) {
-        setError("Identifiants invalides. Vérifiez votre email et mot de passe.");
-      } else if (message.includes("Database error")) {
-        setError("Erreur de base de données. Veuillez contacter l'administrateur.");
-      } else if (message.includes("Profiles are viewable by everyone")) {
-         setError("Erreur de politique de sécurité. Veuillez patienter.");
+        setError("Email ou mot de passe incorrect. Veuillez vérifier vos accès.");
+      } else if (message.includes("Email not confirmed")) {
+        setError("Votre adresse email n'est pas encore confirmée.");
+      } else if (message.includes("Database error") || message.includes("infinite recursion")) {
+        setError("Problème de configuration serveur (Erreur RLS). Contactez l'administrateur.");
+      } else if (message.includes("User not found")) {
+        setError("Aucun compte associé à cet email.");
       } else {
         setError(message);
       }
@@ -57,7 +73,7 @@ export default function Login() {
         {error && (
           <div className="mb-6 p-4 bg-red-50 text-red-600 text-sm rounded-xl flex items-center gap-3 border border-red-100 animate-in fade-in slide-in-from-top-1">
             <AlertCircle size={18} className="flex-shrink-0" /> 
-            <span className="flex-1">{error}</span>
+            <span className="flex-1 font-medium">{error}</span>
           </div>
         )}
         

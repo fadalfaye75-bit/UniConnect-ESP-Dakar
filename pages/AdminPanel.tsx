@@ -93,13 +93,14 @@ export default function AdminPanel() {
 
     setSubmitting(true);
     try {
+      // Fix: Removed adminName as the API method now only takes the user object
       await API.auth.createUser({
         name: newUser.fullName,
         email: newUser.email,
         role: newUser.role,
         className: newUser.className,
         schoolName: newUser.schoolName
-      }, user?.name || 'Admin');
+      });
       
       // On rafraîchit les données après la création
       await fetchGlobalData();
@@ -124,7 +125,8 @@ export default function AdminPanel() {
     if (!editingUser) return;
     setSubmitting(true);
     try {
-      await API.auth.updateProfile(editingUser.id, editingUser, user?.name);
+      // Fix: Removed third argument as updateProfile expects only 2 arguments (id, updates)
+      await API.auth.updateProfile(editingUser.id, editingUser);
       await fetchGlobalData();
       setIsEditModalOpen(false);
       addNotification({ title: 'Succès', message: 'Profil mis à jour.', type: 'success' });
@@ -142,7 +144,8 @@ export default function AdminPanel() {
 
   const handleToggleStatus = async (userId: string) => {
       try {
-          await API.auth.toggleUserStatus(user?.name || 'Admin', userId);
+          // Fix: Removed unused adminName argument as toggleUserStatus now only takes userId
+          await API.auth.toggleUserStatus(userId);
           fetchGlobalData();
           addNotification({ title: 'Succès', message: 'Statut mis à jour.', type: 'info' });
       } catch(e: any) { 
@@ -153,7 +156,8 @@ export default function AdminPanel() {
   const handleDeleteUser = async (userId: string) => {
       if(!window.confirm("Supprimer définitivement cet utilisateur ?")) return;
       try {
-          await API.auth.deleteUser(userId, user?.name);
+          // Fix: Removed extra adminName argument as deleteUser expects only 1 argument (userId)
+          await API.auth.deleteUser(userId);
           fetchGlobalData();
           addNotification({ title: 'Succès', message: 'Utilisateur supprimé.', type: 'info' });
       } catch(e: any) { 
@@ -178,9 +182,11 @@ export default function AdminPanel() {
       setSubmitting(true);
       try {
           if(isEditClassMode) {
-              await API.classes.update(classFormData.id, { name: classFormData.name, email: classFormData.email }, user?.name || 'Admin');
+              // Fix: Removed extra adminName argument as API.classes.update expects 2 arguments
+              await API.classes.update(classFormData.id, { name: classFormData.name, email: classFormData.email });
           } else {
-              await API.classes.create(classFormData.name, classFormData.email, user?.name || 'Admin');
+              // Fix: Removed extra adminName argument as API.classes.create expects 2 arguments
+              await API.classes.create(classFormData.name, classFormData.email);
           }
           await fetchGlobalData();
           setIsClassModalOpen(false);
@@ -368,7 +374,7 @@ export default function AdminPanel() {
                                 <div key={cls.id} className="p-4 bg-gray-50 dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 group relative">
                                     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button onClick={() => openClassModal(cls)} className="p-1.5 text-gray-400 hover:text-blue-500"><PenSquare size={14} /></button>
-                                        <button onClick={() => API.classes.delete(cls.id, user?.name || 'Admin').then(fetchGlobalData)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                                        <button onClick={() => API.classes.delete(cls.id).then(fetchGlobalData)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
                                     </div>
                                     <h4 className="font-bold text-gray-900 dark:text-white">{cls.name}</h4>
                                     <p className="text-xs text-gray-400 mt-1">{cls.email || 'Pas d\'email collectif'}</p>

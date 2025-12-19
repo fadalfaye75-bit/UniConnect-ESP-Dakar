@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API } from '../services/api';
 import { Announcement, Exam, UserRole } from '../types';
-import { Clock, FileText, Video, GraduationCap, Loader2, ChevronRight, ArrowRight, Bell, BarChart2 } from 'lucide-react';
+import { Clock, FileText, GraduationCap, Loader2, ChevronRight, BarChart2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
@@ -26,10 +26,10 @@ export default function Dashboard() {
       const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || '');
       const isAdmin = user?.role === UserRole.ADMIN && !adminViewClass;
 
-      // Parallélisation pour gagner du temps
+      // On demande très peu d'éléments (3) pour maximiser la vitesse du dashboard
       const [allAnns, allExams] = await Promise.all([
-          API.announcements.list(10), // On demande peu d'éléments
-          API.exams.list(10)
+          API.announcements.list(3),
+          API.exams.list(3)
       ]);
 
       const filteredExams = allExams.filter(e => {
@@ -42,8 +42,8 @@ export default function Dashboard() {
         return a.className === targetClass || a.className === 'Général';
       });
 
-      setExams(filteredExams.slice(0, 5));
-      setAnnouncements(filteredAnns.slice(0, 5));
+      setExams(filteredExams.slice(0, 3));
+      setAnnouncements(filteredAnns.slice(0, 3));
     } catch (error) {
       console.error('Dashboard error:', error);
     } finally {
@@ -121,7 +121,7 @@ export default function Dashboard() {
                    </div>
                  ))}
               </div>
-            ) : <div className="p-8 bg-white dark:bg-gray-800 rounded-2xl border border-dashed border-gray-200 text-center text-gray-400">Aucun examen.</div>}
+            ) : <div className="p-8 bg-white dark:bg-gray-800 rounded-2xl border border-dashed border-gray-200 text-center text-gray-400">Aucun examen imminent.</div>}
           </div>
 
           <div className="space-y-4">
