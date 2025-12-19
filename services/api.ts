@@ -5,9 +5,9 @@ import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotific
 
 const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8`;
 
-// Simple cache for static data
+// Cache intelligent avec invalidation ciblée
 const CACHE: Record<string, { data: any, timestamp: number }> = {};
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
 
 const getCached = (key: string) => {
     const entry = CACHE[key];
@@ -17,6 +17,12 @@ const getCached = (key: string) => {
 
 const setCache = (key: string, data: any) => {
     CACHE[key] = { data, timestamp: Date.now() };
+};
+
+const invalidateCache = (prefix: string) => {
+    Object.keys(CACHE).forEach(key => {
+        if (key.startsWith(prefix)) delete CACHE[key];
+    });
 };
 
 const mapProfileToUser = (p: any): User => ({
@@ -48,22 +54,7 @@ const mapAnnouncement = (a: any): Announcement => {
 const handleError = (error: any) => {
   if (!error) return;
   console.error("--- SUPABASE ERROR DETAILS ---", error);
-  
-  let msg = "Une erreur est survenue lors de l'opération.";
-  if (typeof error === 'string') msg = error;
-  else if (error.message) msg = error.message;
-  else if (error.error_description) msg = error.error_description;
-  else msg = JSON.stringify(error);
-
-  if (msg.includes("row-level security") || msg.includes("RLS")) {
-    msg = "Accès refusé : Vérifiez les politiques RLS sur Supabase.";
-  } else if (msg.includes("User already registered")) {
-    msg = "Cet email est déjà utilisé par un autre compte.";
-  } else if (msg.includes("Email confirmation")) {
-    msg = "Désactivez 'Confirm Email' dans les paramètres Auth de Supabase.";
-  }
-  
-  throw new Error(msg);
+  throw new Error(error.message || "Erreur de connexion serveur.");
 };
 
 export const API = {
@@ -72,10 +63,10 @@ export const API = {
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (authError) handleError(authError);
       
-      const { data: profile, error: fetchError } = await supabase.from('profiles').select('*').eq('id', authData.user?.id).maybeSingle();
+      const { data: profile, error: fetchError } = await supabase.from('profiles')
+        .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
+        .eq('id', authData.user?.id).maybeSingle();
       if (fetchError) handleError(fetchError);
-      if (!profile) throw new Error("Profil utilisateur introuvable.");
-      
       return mapProfileToUser(profile);
     },
 
@@ -83,18 +74,19 @@ export const API = {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return null;
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+        const { data: profile } = await supabase.from('profiles')
+          .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
+          .eq('id', session.user.id).maybeSingle();
         return profile ? mapProfileToUser(profile) : null;
-      } catch (e) {
-        return null;
-      }
+      } catch (e) { return null; }
     },
 
     getUsers: async (): Promise<User[]> => {
       const cached = getCached('users_list');
       if (cached) return cached;
-
-      const { data, error } = await supabase.from('profiles').select('*').order('full_name');
+      const { data, error } = await supabase.from('profiles')
+        .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
+        .order('full_name').limit(100);
       if (error) return [];
       const users = (data || []).map(mapProfileToUser);
       setCache('users_list', users);
@@ -106,122 +98,93 @@ export const API = {
       if (updates.name) dbUpdates.full_name = updates.name;
       if (updates.role) dbUpdates.role = updates.role.toLowerCase();
       if (updates.className !== undefined) dbUpdates.classname = updates.className;
+      if (updates.schoolName !== undefined) dbUpdates.school_name = updates.schoolName;
       
       const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
       if (error) handleError(error);
-      
-      delete CACHE['users_list']; // Invalidate cache
-      if (adminName && updates.email) await API.logs.add(adminName, 'Mise à jour profil', updates.email, 'update');
+      invalidateCache('users_list');
       return data ? mapProfileToUser(data) : null;
     },
 
-    toggleUserStatus: async (adminName: string, userId: string) => {
-      const { data: current } = await supabase.from('profiles').select('is_active, email').eq('id', userId).single();
-      const { error } = await supabase.from('profiles').update({ is_active: !current?.is_active }).eq('id', userId);
-      if (error) handleError(error);
-      delete CACHE['users_list'];
-      await API.logs.add(adminName, 'Changement statut', current?.email || userId, 'security');
-    },
-
-    deleteUser: async (userId: string, adminName?: string) => {
-      const { data: profile } = await supabase.from('profiles').select('email').eq('id', userId).single();
-      const { error } = await supabase.from('profiles').delete().eq('id', userId);
-      if (error) handleError(error);
-      delete CACHE['users_list'];
-      if (adminName) await API.logs.add(adminName, 'Suppression utilisateur', profile?.email || userId, 'delete');
-    },
-
     createUser: async (user: any, adminName: string) => {
-      const tempClient = createClient(supabaseUrl, supabaseKey, {
-        auth: { persistSession: false }
-      });
-
+      const tempClient = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
       const { data, error } = await tempClient.auth.signUp({ 
         email: user.email.trim(), 
         password: 'passer25',
-        options: {
-          data: { full_name: user.name, role: user.role.toLowerCase() }
-        }
+        options: { data: { full_name: user.name, role: user.role.toLowerCase() } }
       });
-
       if (error) handleError(error);
-      
       if (data.user) {
-          const { error: profileError } = await supabase.from('profiles').upsert({
-              id: data.user.id,
-              full_name: user.name,
-              email: user.email.trim(),
-              role: user.role.toLowerCase(),
-              classname: user.className || '',
-              is_active: true,
-              avatar_url: getInitialsAvatar(user.name)
-          }, { onConflict: 'id' });
-          
-          if (profileError) handleError(profileError);
-          delete CACHE['users_list'];
-          await API.logs.add(adminName, 'Création utilisateur', user.email, 'create');
+          await supabase.from('profiles').upsert({
+              id: data.user.id, full_name: user.name, email: user.email.trim(),
+              role: user.role.toLowerCase(), classname: user.className || '',
+              is_active: true, avatar_url: getInitialsAvatar(user.name)
+          });
+          invalidateCache('users_list');
       }
       return data;
     },
+    logout: async () => { await supabase.auth.signOut(); },
 
-    updatePassword: async (userId: string, password: string) => {
-      const { error } = await supabase.auth.updateUser({ password });
+    updatePassword: async (id: string, pass: string) => {
+      const { error } = await supabase.auth.updateUser({ password: pass });
       if (error) handleError(error);
     },
 
-    logout: async () => { await supabase.auth.signOut(); }
+    toggleUserStatus: async (adminName: string, userId: string) => {
+      const { data: p } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
+      const { error } = await supabase.from('profiles').update({ is_active: !p?.is_active }).eq('id', userId);
+      if (error) handleError(error);
+      invalidateCache('users_list');
+    },
+
+    deleteUser: async (userId: string, adminName?: string) => {
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) handleError(error);
+      invalidateCache('users_list');
+    }
   },
 
   announcements: {
-    list: async (): Promise<Announcement[]> => {
+    list: async (limit = 20): Promise<Announcement[]> => {
       const { data, error } = await supabase.from('announcements')
         .select('id, title, content, author_name, created_at, classname, priority')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }) // Aligné sur idx_announcements_created_at
+        .limit(limit);
       if (error) return [];
       return (data || []).map(mapAnnouncement);
     },
-
     create: async (ann: any) => {
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user?.id).maybeSingle();
-      
-      const payload: any = {
-        title: ann.title,
-        content: ann.content,
-        priority: ann.priority,
-        classname: ann.className || 'Général',
-        author_id: user?.id,
-        author_name: profile?.full_name || 'Admin'
-      };
-      
-      const { data, error } = await supabase.from('announcements').insert(payload)
-        .select('id, title, content, author_name, created_at, classname, priority').single();
+      const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user?.id).single();
+      const { data, error } = await supabase.from('announcements').insert({
+        title: ann.title, content: ann.content, priority: ann.priority,
+        classname: ann.className || 'Général', author_id: user?.id, author_name: profile?.full_name || 'Admin'
+      }).select().single();
       if (error) handleError(error);
       return mapAnnouncement(data);
     },
-
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
-        title: ann.title, content: ann.content, priority: ann.priority
-      }).eq('id', id).select('id, title, content, author_name, created_at, classname, priority').single();
+        title: ann.title, content: ann.content, priority: ann.priority, classname: ann.className
+      }).eq('id', id).select().single();
       if (error) handleError(error);
       return mapAnnouncement(data);
     },
-
-    delete: async (id: string) => {
-      const { error } = await supabase.from('announcements').delete().eq('id', id);
-      if (error) handleError(error);
-    }
+    delete: async (id: string) => { await supabase.from('announcements').delete().eq('id', id); }
   },
 
   polls: {
     list: async (): Promise<Poll[]> => {
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: polls, error } = await supabase.from('polls').select('*, poll_options(*)').order('created_at', { ascending: false });
+      const { data: polls, error } = await supabase.from('polls')
+        .select('id, question, classname, is_active, start_time, end_time, poll_options(id, label, votes)')
+        .order('created_at', { ascending: false }) // Aligné sur idx_polls_created_at
+        .limit(15);
       if (error) return [];
       let userVotes: any[] = [];
       if (user) {
-        const { data } = await supabase.from('poll_votes').select('*').eq('user_id', user.id);
+        const { data } = await supabase.from('poll_votes').select('poll_id, option_id').eq('user_id', user.id);
         userVotes = data || [];
       }
       return (polls || []).map(p => {
@@ -235,57 +198,46 @@ export const API = {
         };
       });
     },
-
-    create: async (poll: any) => {
-      const { data: newPoll, error: pError } = await supabase.from('polls').insert({
-        question: poll.question, classname: poll.className, is_active: true,
-        start_time: poll.startTime, end_time: poll.endTime
-      }).select().single();
-      if (pError) handleError(pError);
-      if (poll.options?.length > 0) {
-        const opts = poll.options.map((o: any) => ({ poll_id: newPoll.id, label: o.label }));
-        await supabase.from('poll_options').insert(opts);
-      }
-      return newPoll;
+    vote: async (pollId: string, optionId: string) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user?.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
+      const { data: opt } = await supabase.from('poll_options').select('votes').eq('id', optionId).single();
+      await supabase.from('poll_options').update({ votes: (opt?.votes || 0) + 1 }).eq('id', optionId);
     },
-
-    update: async (id: string, poll: any) => {
+    toggleStatus: async (id: string) => {
+      const { data: p } = await supabase.from('polls').select('is_active').eq('id', id).single();
+      await supabase.from('polls').update({ is_active: !p?.is_active }).eq('id', id);
+    },
+    delete: async (id: string) => { await supabase.from('polls').delete().eq('id', id); },
+    update: async (id: string, p: any) => {
       const { error } = await supabase.from('polls').update({
-        question: poll.question, start_time: poll.startTime, end_time: poll.endTime
+        question: p.question, start_time: p.startTime, end_time: p.endTime
       }).eq('id', id);
       if (error) handleError(error);
     },
-
-    delete: async (id: string) => {
-      const { error } = await supabase.from('polls').delete().eq('id', id);
-      if (error) handleError(error);
-    },
-
-    toggleStatus: async (id: string) => {
-      const { data: current } = await supabase.from('polls').select('is_active').eq('id', id).single();
-      const { error } = await supabase.from('polls').update({ is_active: !current?.is_active }).eq('id', id);
-      if (error) handleError(error);
-    },
-
-    vote: async (pollId: string, optionId: string) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Connexion requise pour voter.");
-      const { error } = await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
-      if (error) handleError(error);
-      const { data: opt } = await supabase.from('poll_options').select('votes').eq('id', optionId).single();
-      await supabase.from('poll_options').update({ votes: (opt?.votes || 0) + 1 }).eq('id', optionId);
+    create: async (p: any) => {
+      const { data: poll, error: pollErr } = await supabase.from('polls').insert({
+        question: p.question, classname: p.className, is_active: true, start_time: p.startTime, end_time: p.endTime
+      }).select().single();
+      if (pollErr) handleError(pollErr);
+      const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
+      const { error: optErr } = await supabase.from('poll_options').insert(options);
+      if (optErr) handleError(optErr);
+      return poll;
     }
   },
 
   exams: {
-    list: async (): Promise<Exam[]> => {
-      const { data, error } = await supabase.from('exams').select('*').order('exam_date', { ascending: true });
+    list: async (limit = 20): Promise<Exam[]> => {
+      const { data, error } = await supabase.from('exams')
+        .select('id, subject, exam_date, duration, room, notes, classname')
+        .order('exam_date', { ascending: true }) // Aligné sur idx_exams_exam_date
+        .limit(limit);
       if (error) return [];
       return (data || []).map(e => ({
         id: e.id, subject: e.subject, date: e.exam_date, duration: e.duration, room: e.room, notes: e.notes, className: e.classname || ''
       }));
     },
-
     create: async (exam: any) => {
       const { data, error } = await supabase.from('exams').insert({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className
@@ -293,64 +245,40 @@ export const API = {
       if (error) handleError(error);
       return { ...exam, id: data.id };
     },
-
     update: async (id: string, exam: any) => {
       const { data, error } = await supabase.from('exams').update({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
       }).eq('id', id).select().single();
       if (error) handleError(error);
-      return { id: data.id, subject: data.subject, date: data.exam_date, duration: data.duration, room: data.room, notes: data.notes, className: data.classname || '' };
+      return { ...exam, id: data.id };
     },
-
-    delete: async (id: string) => { 
-      const { error } = await supabase.from('exams').delete().eq('id', id);
-      if (error) handleError(error);
-    }
+    delete: async (id: string) => { await supabase.from('exams').delete().eq('id', id); }
   },
 
   classes: {
     list: async (): Promise<ClassGroup[]> => {
       const cached = getCached('classes_list');
       if (cached) return cached;
-
-      const { data, error } = await supabase.from('classes').select('*').order('name');
+      const { data, error } = await supabase.from('classes').select('id, name, email').order('name');
       if (error) return [];
       const classes = (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
       setCache('classes_list', classes);
       return classes;
     },
-
-    create: async (name: string, email: string, adminName?: string) => {
-      const { error } = await supabase.from('classes').insert({ name, email });
-      if (error) handleError(error);
-      delete CACHE['classes_list'];
-      if (adminName) await API.logs.add(adminName, 'Création classe', name, 'create');
-    },
-
-    update: async (id: string, cls: any, adminName?: string) => {
+    update: async (id: string, cls: any, adminName: string) => {
       const { error } = await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
       if (error) handleError(error);
-      delete CACHE['classes_list'];
-      if (adminName) await API.logs.add(adminName, 'Mise à jour classe', cls.name, 'update');
+      invalidateCache('classes_list');
     },
-
-    delete: async (id: string, adminName?: string) => {
+    create: async (name: string, email: string, adminName: string) => {
+      const { error } = await supabase.from('classes').insert({ name, email });
+      if (error) handleError(error);
+      invalidateCache('classes_list');
+    },
+    delete: async (id: string, adminName: string) => {
       const { error } = await supabase.from('classes').delete().eq('id', id);
       if (error) handleError(error);
-      delete CACHE['classes_list'];
-      if (adminName) await API.logs.add(adminName, 'Suppression classe', id, 'delete');
-    }
-  },
-
-  logs: {
-    list: async (): Promise<ActivityLog[]> => {
-      const { data, error } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false });
-      if (error) return [];
-      return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
-    },
-
-    add: async (actor: string, action: string, target: string, type: string) => {
-      await supabase.from('activity_logs').insert({ actor, action, target, type });
+      invalidateCache('classes_list');
     }
   },
 
@@ -358,64 +286,79 @@ export const API = {
     list: async (): Promise<AppNotification[]> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
-      const { data, error } = await supabase.from('notifications').select('*').or(`user_id.eq.${user.id},target_class.eq.Général`).order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('notifications')
+        .select('id, title, message, type, created_at, is_read')
+        .or(`user_id.eq.${user.id},target_class.eq.Général`)
+        .order('created_at', { ascending: false }) // Aligné sur idx_notifications_created_at
+        .limit(20);
       if (error) return [];
       return (data || []).map(n => ({ id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read }));
     },
-
-    add: async (notif: any) => { await supabase.from('notifications').insert(notif); },
     markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
+    add: async (notif: any) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('notifications').insert({
+        title: notif.title, message: notif.message, type: notif.type,
+        user_id: user?.id, target_class: notif.targetClass || 'Général', is_read: false
+      });
+    },
     markAllRead: async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id);
+      await supabase.from('notifications').update({ is_read: true }).eq('user_id', user?.id);
     },
     clear: async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) await supabase.from('notifications').delete().eq('user_id', user.id);
+      await supabase.from('notifications').delete().eq('user_id', user?.id);
     }
   },
 
   meet: {
     list: async (): Promise<MeetLink[]> => {
-      const { data, error } = await supabase.from('meet_links').select('*').order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('meet_links').select('id, title, platform, url, time, classname').order('created_at', { ascending: false });
       if (error) return [];
       return (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
     },
-
-    create: async (meet: any) => {
-      const { data, error } = await supabase.from('meet_links').insert({ title: meet.title, platform: meet.platform, url: meet.url, time: meet.time, classname: meet.className }).select().single();
-      if (error) handleError(error);
-      return { ...meet, id: data.id };
-    },
-
-    update: async (id: string, meet: any) => {
-      const { data, error } = await supabase.from('meet_links').update({ title: meet.title, platform: meet.platform, url: meet.url, time: meet.time }).eq('id', id).select().single();
+    create: async (m: any) => {
+      const { data, error } = await supabase.from('meet_links').insert({
+        title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className
+      }).select().single();
       if (error) handleError(error);
       return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
     },
-
-    delete: async (id: string) => { 
-      const { error } = await supabase.from('meet_links').delete().eq('id', id);
+    update: async (id: string, m: any) => {
+      const { data, error } = await supabase.from('meet_links').update({
+        title: m.title, platform: m.platform, url: m.url, time: m.time
+      }).eq('id', id).select().single();
       if (error) handleError(error);
-    }
+      return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
+    },
+    delete: async (id: string) => { await supabase.from('meet_links').delete().eq('id', id); }
   },
 
   schedules: {
     list: async (): Promise<ScheduleFile[]> => {
-      const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false });
+      const { data, error } = await supabase.from('schedules').select('id, version, upload_date, url, classname').order('upload_date', { ascending: false }).limit(5);
       if (error) return [];
       return (data || []).map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.classname }));
     },
-
     create: async (sch: any) => {
-      const { data, error } = await supabase.from('schedules').insert({ version: sch.version, url: sch.url, classname: sch.className }).select().single();
+      const { data, error } = await supabase.from('schedules').insert({
+        version: sch.version, url: sch.url, classname: sch.className
+      }).select().single();
       if (error) handleError(error);
-      return { ...sch, id: data.id, uploadDate: data.upload_date };
+      return { id: data.id, version: data.version, uploadDate: data.upload_date, url: data.url, className: data.classname };
     },
+    delete: async (id: string) => { await supabase.from('schedules').delete().eq('id', id); }
+  },
 
-    delete: async (id: string) => { 
-      const { error } = await supabase.from('schedules').delete().eq('id', id);
-      if (error) handleError(error);
+  logs: {
+    list: async (): Promise<ActivityLog[]> => {
+      const { data, error } = await supabase.from('activity_logs').select('id, actor, action, target, type, created_at').order('created_at', { ascending: false }).limit(50);
+      if (error) return [];
+      return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
+    },
+    add: async (actor: string, action: string, target: string, type: string) => {
+      await supabase.from('activity_logs').insert({ actor, action, target, type });
     }
   }
 };
