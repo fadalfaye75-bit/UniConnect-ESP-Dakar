@@ -2,40 +2,55 @@
 /**
  * DOCUMENTATION SQL DE MAINTENANCE - UNICONNECT
  * 
- * 1. RÉCURSION INFINIE (Profiles RLS) - EXECUTER EN PREMIER :
- * DROP POLICY IF EXISTS "Propriétaire : Tout" ON profiles;
- * DROP POLICY IF EXISTS "Admin : Tout" ON profiles;
+ * 1. FONCTIONS DE SÉCURITÉ (Optimisées pour éviter la récursion et les failles de search_path) :
+ * -----------------------------------------------------------------------------------------
+ * -- Note: L'utilisation de 'SET search_path = public' est critique pour la sécurité (évite le détournement de schéma).
  * 
  * CREATE OR REPLACE FUNCTION public.check_is_admin()
  * RETURNS boolean AS $$
  * BEGIN
- *   RETURN (SELECT (role = 'admin') FROM public.profiles WHERE id = auth.uid());
+ *   RETURN EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin');
  * END;
  * $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
  * 
- * CREATE POLICY "Propriétaire : Tout" ON profiles FOR ALL USING (auth.uid() = id);
- * CREATE POLICY "Admin : Tout" ON profiles FOR ALL USING (public.check_is_admin());
+ * CREATE OR REPLACE FUNCTION public.check_is_delegate()
+ * RETURNS boolean AS $$
+ * BEGIN
+ *   RETURN EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delegate');
+ * END;
+ * $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
  * 
- * 2. STOCKAGE - CRÉATION DES BUCKETS :
+ * 2. RÉÉCRITURE RLS TABLE PROFILES :
+ * ----------------------------------
+ * ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ * 
+ * DROP POLICY IF EXISTS "Profiles_Read_All" ON profiles;
+ * DROP POLICY IF EXISTS "Profiles_Insert" ON profiles;
+ * DROP POLICY IF EXISTS "Profiles_Update" ON profiles;
+ * DROP POLICY IF EXISTS "Profiles_Delete" ON profiles;
+ * 
+ * -- Tout le monde peut voir les profils (pour les noms d'auteurs et avatars)
+ * CREATE POLICY "Profiles_Read_All" ON profiles FOR SELECT USING (auth.role() = 'authenticated');
+ * 
+ * -- Création autorisée par l'utilisateur lui-même ou un admin
+ * CREATE POLICY "Profiles_Insert" ON profiles FOR INSERT WITH CHECK (auth.uid() = id OR public.check_is_admin());
+ * 
+ * -- Modification par soi-même ou un admin
+ * CREATE POLICY "Profiles_Update" ON profiles FOR UPDATE USING (auth.uid() = id OR public.check_is_admin());
+ * 
+ * -- Suppression réservée aux administrateurs
+ * CREATE POLICY "Profiles_Delete" ON profiles FOR DELETE USING (public.check_is_admin());
+ * 
+ * 3. STOCKAGE - BUCKETS ET POLITIQUES :
+ * -------------------------------------
  * INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true) ON CONFLICT DO NOTHING;
  * INSERT INTO storage.buckets (id, name, public) VALUES ('schedules', 'schedules', true) ON CONFLICT DO NOTHING;
  * INSERT INTO storage.buckets (id, name, public) VALUES ('announcements', 'announcements', true) ON CONFLICT DO NOTHING;
  * 
- * 3. POLITIQUES DE STOCKAGE (storage.objects) :
- * DROP POLICY IF EXISTS "Lecture publique pour tous" ON storage.objects;
- * DROP POLICY IF EXISTS "Upload Avatars Authentifié" ON storage.objects;
- * DROP POLICY IF EXISTS "Admin/Délégués Gèrent Fichiers" ON storage.objects;
- * 
- * CREATE POLICY "Lecture publique pour tous" ON storage.objects FOR SELECT USING (true);
- * 
- * CREATE POLICY "Upload Avatars Authentifié" ON storage.objects FOR INSERT 
- * WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
- * 
- * CREATE POLICY "Admin/Délégués Gèrent Fichiers" ON storage.objects FOR ALL 
- * USING (
- *   (bucket_id IN ('schedules', 'announcements')) 
- *   AND (public.check_is_admin() OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delegate'))
- * );
+ * CREATE POLICY "Lecture publique fichiers" ON storage.objects FOR SELECT USING (true);
+ * CREATE POLICY "Upload Avatars" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
+ * CREATE POLICY "Gestion Fichiers Admin/Delegue" ON storage.objects FOR ALL 
+ * USING (bucket_id IN ('schedules', 'announcements') AND (public.check_is_admin() OR public.check_is_delegate()));
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -93,7 +108,6 @@ const mapAnnouncement = (a: any): Announcement => {
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      // Nettoyage de l'email
       const cleanEmail = email.trim().toLowerCase();
       
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
@@ -102,7 +116,6 @@ export const API = {
       });
       
       if (authError) {
-        // On renvoie l'objet d'erreur de Supabase pour que le front puisse le traiter
         throw authError;
       }
       
