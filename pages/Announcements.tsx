@@ -16,22 +16,27 @@ const formatContent = (text: any) => {
     if (!text || typeof text !== 'string') return null;
     
     return text.split('\n').map((line, i) => {
-        if (!line.trim()) return <br key={`br-${i}`} />;
+        const trimmedLine = line.trim();
+        if (!trimmedLine) return <br key={`br-${i}`} />;
         
-        if (line.trim().startsWith('- ')) {
-            return <li key={`li-${i}`} className="ml-4 list-disc marker:text-gray-400">{line.replace('- ', '')}</li>;
+        if (trimmedLine.startsWith('- ')) {
+            return (
+              <li key={`li-${i}`} className="ml-4 list-disc marker:text-gray-400">
+                {trimmedLine.replace('- ', '')}
+              </li>
+            );
         }
 
         // Split by markdown markers and wrap in relevant tags
-        const parts = line.split(/(\*.*?\*|_.*?_)/g).map((part, j) => {
-            if (typeof part !== 'string') return null;
+        const parts = trimmedLine.split(/(\*.*?\*|_.*?_)/g).map((part, j) => {
+            if (!part) return "";
             if (part.startsWith('*') && part.endsWith('*')) {
                 return <strong key={`bold-${j}`} className="font-bold text-gray-900 dark:text-white">{part.slice(1, -1)}</strong>;
             }
             if (part.startsWith('_') && part.endsWith('_')) {
                 return <em key={`italic-${j}`} className="italic text-gray-700 dark:text-gray-300">{part.slice(1, -1)}</em>;
             }
-            return part;
+            return part; // Return string, not object
         });
         
         return <p key={`p-${i}`} className="mb-1">{parts}</p>;
