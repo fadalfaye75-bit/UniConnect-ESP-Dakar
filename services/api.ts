@@ -23,7 +23,7 @@ const mapAnnouncement = (a: any): Announcement => ({
   date: a.created_at,
   className: a.classname || 'Général',
   priority: a.priority as any,
-  links: a.links || []
+  links: [] // Fix: La colonne links n'existe pas en DB, on retourne un tableau vide
 });
 
 const handleError = (error: any) => {
@@ -32,7 +32,6 @@ const handleError = (error: any) => {
   
   let msg = "Une erreur est survenue lors de l'opération.";
   
-  // Extraction intelligente du message d'erreur
   if (typeof error === 'string') {
     msg = error;
   } else if (error.message) {
@@ -43,13 +42,12 @@ const handleError = (error: any) => {
     msg = JSON.stringify(error);
   }
 
-  // Traduction pour l'utilisateur final
   if (msg.includes("row-level security") || msg.includes("RLS")) {
-    msg = "Accès refusé : vous n'avez pas les permissions nécessaires pour cette action (Vérifiez votre rôle ou votre classe).";
-  } else if (msg.includes("column \"class_name\" does not exist")) {
-    msg = "Erreur de base de données : la colonne s'appelle 'classname' (sans underscore).";
+    msg = "Accès refusé : vous n'avez pas les permissions nécessaires pour cette action.";
+  } else if (msg.includes("column \"links\" of relation \"announcements\" does not exist")) {
+    msg = "Erreur de schéma : La colonne 'links' est manquante. Les liens ont été désactivés temporairement.";
   } else if (msg.includes("Failed to fetch")) {
-    msg = "Connexion réseau impossible. Vérifiez votre accès internet.";
+    msg = "Connexion réseau impossible.";
   }
   
   throw new Error(msg);
@@ -63,7 +61,7 @@ export const API = {
       
       const { data: profile, error: fetchError } = await supabase.from('profiles').select('*').eq('id', authData.user?.id).maybeSingle();
       if (fetchError) handleError(fetchError);
-      if (!profile) throw new Error("Profil utilisateur introuvable dans la base de données.");
+      if (!profile) throw new Error("Profil utilisateur introuvable.");
       
       return mapProfileToUser(profile);
     },
@@ -141,7 +139,8 @@ export const API = {
 
   announcements: {
     list: async (): Promise<Announcement[]> => {
-      const { data, error } = await supabase.from('announcements').select('*').order('created_at', { ascending: false });
+      // On retire 'links' du select car la colonne est absente
+      const { data, error } = await supabase.from('announcements').select('id, title, content, author_name, created_at, classname, priority').order('created_at', { ascending: false });
       if (error) return [];
       return (data || []).map(mapAnnouncement);
     },
@@ -150,24 +149,24 @@ export const API = {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user?.id).maybeSingle();
       
-      const payload = {
+      const payload: any = {
         title: ann.title,
         content: ann.content,
         priority: ann.priority,
         classname: ann.className || 'Général',
         author_id: user?.id,
-        author_name: profile?.full_name || 'Admin',
-        links: ann.links || []
+        author_name: profile?.full_name || 'Admin'
       };
-      const { data, error } = await supabase.from('announcements').insert(payload).select().single();
+      
+      const { data, error } = await supabase.from('announcements').insert(payload).select('id, title, content, author_name, created_at, classname, priority').single();
       if (error) handleError(error);
       return mapAnnouncement(data);
     },
 
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
-        title: ann.title, content: ann.content, priority: ann.priority, links: ann.links
-      }).eq('id', id).select().single();
+        title: ann.title, content: ann.content, priority: ann.priority
+      }).eq('id', id).select('id, title, content, author_name, created_at, classname, priority').single();
       if (error) handleError(error);
       return mapAnnouncement(data);
     },

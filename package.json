@@ -14,7 +14,7 @@
     "react-router-dom": "7.1.0",
     "lucide-react": "0.460.0",
     "recharts": "2.13.0",
-    "@google/genai": "0.21.0",
+    "@google/genai": "latest",
     "@supabase/supabase-js": "2.46.1"
   },
   "devDependencies": {
