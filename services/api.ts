@@ -15,16 +15,20 @@ const mapProfileToUser = (p: any): User => ({
   isActive: p.is_active !== false
 });
 
-const mapAnnouncement = (a: any): Announcement => ({
-  id: a.id,
-  title: a.title,
-  content: a.content,
-  author: a.author_name || 'Anonyme',
-  date: a.created_at,
-  className: a.classname || 'Général',
-  priority: a.priority as any,
-  links: [] // Fix: La colonne links n'existe pas en DB, on retourne un tableau vide
-});
+const mapAnnouncement = (a: any): Announcement => {
+  const priority = a.priority || 'normal';
+  return {
+    id: a.id,
+    title: a.title,
+    content: a.content || '',
+    author: a.author_name || 'Anonyme',
+    date: a.created_at,
+    className: a.classname || 'Général',
+    priority: priority as any,
+    isImportant: priority === 'important' || priority === 'urgent',
+    links: [] // Fix PGRST204: links n'existe pas en DB, on force un tableau vide côté client
+  };
+};
 
 const handleError = (error: any) => {
   if (!error) return;
@@ -43,11 +47,9 @@ const handleError = (error: any) => {
   }
 
   if (msg.includes("row-level security") || msg.includes("RLS")) {
-    msg = "Accès refusé : vous n'avez pas les permissions nécessaires pour cette action.";
-  } else if (msg.includes("column \"links\" of relation \"announcements\" does not exist")) {
-    msg = "Erreur de schéma : La colonne 'links' est manquante. Les liens ont été désactivés temporairement.";
-  } else if (msg.includes("Failed to fetch")) {
-    msg = "Connexion réseau impossible.";
+    msg = "Accès refusé : vous n'avez pas les permissions nécessaires.";
+  } else if (msg.includes("column \"links\"")) {
+    msg = "Erreur de schéma : La colonne 'links' a été désactivée pour compatibilité.";
   }
   
   throw new Error(msg);
@@ -139,8 +141,9 @@ export const API = {
 
   announcements: {
     list: async (): Promise<Announcement[]> => {
-      // On retire 'links' du select car la colonne est absente
-      const { data, error } = await supabase.from('announcements').select('id, title, content, author_name, created_at, classname, priority').order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('announcements')
+        .select('id, title, content, author_name, created_at, classname, priority')
+        .order('created_at', { ascending: false });
       if (error) return [];
       return (data || []).map(mapAnnouncement);
     },
@@ -158,7 +161,8 @@ export const API = {
         author_name: profile?.full_name || 'Admin'
       };
       
-      const { data, error } = await supabase.from('announcements').insert(payload).select('id, title, content, author_name, created_at, classname, priority').single();
+      const { data, error } = await supabase.from('announcements').insert(payload)
+        .select('id, title, content, author_name, created_at, classname, priority').single();
       if (error) handleError(error);
       return mapAnnouncement(data);
     },
@@ -232,7 +236,7 @@ export const API = {
 
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Veuillez vous connecter pour voter.");
+      if (!user) throw new Error("Connexion requise pour voter.");
       const { error } = await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
       if (error) handleError(error);
       const { data: opt } = await supabase.from('poll_options').select('votes').eq('id', optionId).single();
