@@ -26,7 +26,7 @@ const mapAnnouncement = (a: any): Announcement => {
     className: a.classname || 'Général',
     priority: priority as any,
     isImportant: priority === 'important' || priority === 'urgent',
-    links: [] // Fix PGRST204: links n'existe pas en DB, on force un tableau vide côté client
+    links: [] 
   };
 };
 
@@ -49,7 +49,7 @@ const handleError = (error: any) => {
   if (msg.includes("row-level security") || msg.includes("RLS")) {
     msg = "Accès refusé : vous n'avez pas les permissions nécessaires.";
   } else if (msg.includes("column \"links\"")) {
-    msg = "Erreur de schéma : La colonne 'links' a été désactivée pour compatibilité.";
+    msg = "Erreur de schéma : La colonne 'links' est absente. Les fonctionnalités de liens externes sont désactivées.";
   }
   
   throw new Error(msg);

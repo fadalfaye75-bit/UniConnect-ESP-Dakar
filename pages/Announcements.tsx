@@ -12,26 +12,29 @@ import Modal from '../components/Modal';
 import { useNotification } from '../context/NotificationContext';
 
 // Safe text formatter to prevent Error 31
-const formatContent = (text: string | null | undefined) => {
-    if (!text) return null;
+const formatContent = (text: any) => {
+    if (!text || typeof text !== 'string') return null;
+    
     return text.split('\n').map((line, i) => {
-        if (!line.trim()) return <br key={i} />;
+        if (!line.trim()) return <br key={`br-${i}`} />;
         
         if (line.trim().startsWith('- ')) {
-            return <li key={i} className="ml-4 list-disc marker:text-gray-400">{line.replace('- ', '')}</li>;
+            return <li key={`li-${i}`} className="ml-4 list-disc marker:text-gray-400">{line.replace('- ', '')}</li>;
         }
 
+        // Split by markdown markers and wrap in relevant tags
         const parts = line.split(/(\*.*?\*|_.*?_)/g).map((part, j) => {
+            if (typeof part !== 'string') return null;
             if (part.startsWith('*') && part.endsWith('*')) {
-                return <strong key={j} className="font-bold text-gray-900 dark:text-white">{part.slice(1, -1)}</strong>;
+                return <strong key={`bold-${j}`} className="font-bold text-gray-900 dark:text-white">{part.slice(1, -1)}</strong>;
             }
             if (part.startsWith('_') && part.endsWith('_')) {
-                return <em key={j} className="italic text-gray-700 dark:text-gray-300">{part.slice(1, -1)}</em>;
+                return <em key={`italic-${j}`} className="italic text-gray-700 dark:text-gray-300">{part.slice(1, -1)}</em>;
             }
             return part;
         });
         
-        return <p key={i} className="mb-1">{parts}</p>;
+        return <p key={`p-${i}`} className="mb-1">{parts}</p>;
     });
 };
 
@@ -43,7 +46,6 @@ export default function Announcements() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [readIds, setReadIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -53,7 +55,6 @@ export default function Announcements() {
     priority: 'normal' as AnnouncementPriority,
     links: [] as LinkType[]
   });
-  const [newLink, setNewLink] = useState({ label: '', url: '' });
 
   const canManage = user?.role === UserRole.ADMIN || user?.role === UserRole.DELEGATE;
 
@@ -103,13 +104,6 @@ export default function Announcements() {
     });
   };
 
-  const handleShare = (e: React.MouseEvent, ann: Announcement) => {
-    e.stopPropagation();
-    const subject = encodeURIComponent(`Annonce: ${ann.title}`);
-    const body = encodeURIComponent(`${ann.title}\n\n${ann.content}`);
-    window.location.href = `mailto:?subject=${subject}&body=${body}`;
-  };
-
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!window.confirm('Supprimer cette annonce ?')) return;
@@ -138,29 +132,6 @@ export default function Announcements() {
         links: ann.links || [] 
     });
     setIsModalOpen(true);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    addNotification({ title: 'Fichier', message: 'Upload simulé.', type: 'info' });
-  };
-
-  const removeLink = (index: number) => {
-      setFormData(prev => ({ ...prev, links: prev.links.filter((_, i) => i !== index) }));
-  };
-
-  const insertFormat = (char: string, wrap: boolean = true) => {
-      if(!textareaRef.current) return;
-      const start = textareaRef.current.selectionStart;
-      const end = textareaRef.current.selectionEnd;
-      const text = formData.content;
-      
-      let newText = wrap 
-          ? text.substring(0, start) + char + text.substring(start, end) + char + text.substring(end)
-          : text.substring(0, start) + char + text.substring(start);
-      
-      setFormData({ ...formData, content: newText });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -202,7 +173,7 @@ export default function Announcements() {
       }
   };
 
-  if (loading) return <div className="flex justify-center h-64 items-center"><Loader2 className="animate-spin text-primary-500" /></div>;
+  if (loading) return <div className="flex justify-center h-64 items-center"><Loader2 className="animate-spin text-primary-500" size={32} /></div>;
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -219,7 +190,7 @@ export default function Announcements() {
 
       <div className="space-y-4">
         {displayedAnnouncements.length === 0 ? (
-          <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200">
+          <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-bold">Aucune annonce</h3>
           </div>
         ) : (
@@ -233,7 +204,7 @@ export default function Announcements() {
               >
                 <div className="flex justify-between items-start mb-4">
                    <div className="flex items-center gap-3">
-                       <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center font-bold">
+                       <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center font-bold">
                            {ann.author.charAt(0)}
                        </div>
                        <div>
@@ -245,11 +216,11 @@ export default function Announcements() {
                        </div>
                    </div>
                    <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                      <button onClick={(e) => handleCopy(e, ann.content)} className="p-1.5 text-gray-400"><Copy size={14} /></button>
+                      <button onClick={(e) => handleCopy(e, ann.content)} className="p-1.5 text-gray-400 hover:text-primary-500"><Copy size={14} /></button>
                       {canManage && (
                           <>
-                              <button onClick={(e) => handleEdit(e, ann)} className="p-1.5 text-gray-400"><Pencil size={14} /></button>
-                              <button onClick={(e) => handleDelete(e, ann.id)} className="p-1.5 text-gray-400"><Trash2 size={14} /></button>
+                              <button onClick={(e) => handleEdit(e, ann)} className="p-1.5 text-gray-400 hover:text-blue-500"><Pencil size={14} /></button>
+                              <button onClick={(e) => handleDelete(e, ann.id)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
                           </>
                       )}
                    </div>
@@ -269,12 +240,12 @@ export default function Announcements() {
           <input 
             type="text" required value={formData.title} placeholder="Titre"
             onChange={e => setFormData({...formData, title: e.target.value})}
-            className="w-full px-4 py-2 rounded-xl border"
+            className="w-full px-4 py-2 rounded-xl border dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500"
           />
           <div className="grid grid-cols-3 gap-2">
               {['normal', 'important', 'urgent'].map(p => (
                   <button key={p} type="button" onClick={() => setFormData({...formData, priority: p as any})}
-                    className={`py-2 rounded-lg text-xs font-bold border capitalize ${formData.priority === p ? 'bg-primary-50 border-primary-500 text-primary-600' : 'bg-white'}`}>
+                    className={`py-2 rounded-lg text-xs font-bold border capitalize transition-colors ${formData.priority === p ? 'bg-primary-50 border-primary-500 text-primary-600 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'}`}>
                     {p}
                   </button>
               ))}
@@ -282,9 +253,9 @@ export default function Announcements() {
           <textarea 
             ref={textareaRef} required rows={5} value={formData.content} placeholder="Message..."
             onChange={e => setFormData({...formData, content: e.target.value})}
-            className="w-full px-4 py-3 border rounded-xl"
+            className="w-full px-4 py-3 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500"
           />
-          <button type="submit" disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl">
+          <button type="submit" disabled={submitting} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3 rounded-xl transition-opacity disabled:opacity-50">
              {submitting ? 'Envoi...' : 'Publier'}
           </button>
         </form>
