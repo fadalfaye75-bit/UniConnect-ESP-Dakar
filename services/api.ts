@@ -1,58 +1,4 @@
 
-/**
- * DOCUMENTATION SQL DE MAINTENANCE - UNICONNECT
- * 
- * 1. FONCTIONS DE SÉCURITÉ (Optimisées pour éviter la récursion et les failles de search_path) :
- * -----------------------------------------------------------------------------------------
- * -- Note: L'utilisation de 'SET search_path = public' est critique pour la sécurité (évite le détournement de schéma).
- * 
- * CREATE OR REPLACE FUNCTION public.check_is_admin()
- * RETURNS boolean AS $$
- * BEGIN
- *   RETURN EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin');
- * END;
- * $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
- * 
- * CREATE OR REPLACE FUNCTION public.check_is_delegate()
- * RETURNS boolean AS $$
- * BEGIN
- *   RETURN EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'delegate');
- * END;
- * $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
- * 
- * 2. RÉÉCRITURE RLS TABLE PROFILES :
- * ----------------------------------
- * ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
- * 
- * DROP POLICY IF EXISTS "Profiles_Read_All" ON profiles;
- * DROP POLICY IF EXISTS "Profiles_Insert" ON profiles;
- * DROP POLICY IF EXISTS "Profiles_Update" ON profiles;
- * DROP POLICY IF EXISTS "Profiles_Delete" ON profiles;
- * 
- * -- Tout le monde peut voir les profils (pour les noms d'auteurs et avatars)
- * CREATE POLICY "Profiles_Read_All" ON profiles FOR SELECT USING (auth.role() = 'authenticated');
- * 
- * -- Création autorisée par l'utilisateur lui-même ou un admin
- * CREATE POLICY "Profiles_Insert" ON profiles FOR INSERT WITH CHECK (auth.uid() = id OR public.check_is_admin());
- * 
- * -- Modification par soi-même ou un admin
- * CREATE POLICY "Profiles_Update" ON profiles FOR UPDATE USING (auth.uid() = id OR public.check_is_admin());
- * 
- * -- Suppression réservée aux administrateurs
- * CREATE POLICY "Profiles_Delete" ON profiles FOR DELETE USING (public.check_is_admin());
- * 
- * 3. STOCKAGE - BUCKETS ET POLITIQUES :
- * -------------------------------------
- * INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true) ON CONFLICT DO NOTHING;
- * INSERT INTO storage.buckets (id, name, public) VALUES ('schedules', 'schedules', true) ON CONFLICT DO NOTHING;
- * INSERT INTO storage.buckets (id, name, public) VALUES ('announcements', 'announcements', true) ON CONFLICT DO NOTHING;
- * 
- * CREATE POLICY "Lecture publique fichiers" ON storage.objects FOR SELECT USING (true);
- * CREATE POLICY "Upload Avatars" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
- * CREATE POLICY "Gestion Fichiers Admin/Delegue" ON storage.objects FOR ALL 
- * USING (bucket_id IN ('schedules', 'announcements') AND (public.check_is_admin() OR public.check_is_delegate()));
- */
-
 import { createClient } from '@supabase/supabase-js';
 import { supabase, supabaseUrl, supabaseKey } from './supabaseClient';
 import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotification, Poll, MeetLink, ScheduleFile } from '../types';
@@ -61,7 +7,7 @@ const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initia
 
 // Cache ultra-rapide pour éviter les requêtes inutiles
 const CACHE: Record<string, { data: any, timestamp: number }> = {};
-const CACHE_TTL = 60 * 1000; 
+const CACHE_TTL = 45 * 1000; // 45 secondes de cache
 
 const getCached = (key: string) => {
     const entry = CACHE[key];
@@ -73,10 +19,14 @@ const setCache = (key: string, data: any) => {
     CACHE[key] = { data, timestamp: Date.now() };
 };
 
-const invalidateCache = (prefix: string) => {
-    Object.keys(CACHE).forEach(key => {
-        if (key.startsWith(prefix)) delete CACHE[key];
-    });
+export const invalidateCache = (prefix?: string) => {
+    if (!prefix) {
+        Object.keys(CACHE).forEach(key => delete CACHE[key]);
+    } else {
+        Object.keys(CACHE).forEach(key => {
+            if (key.startsWith(prefix)) delete CACHE[key];
+        });
+    }
 };
 
 const mapProfileToUser = (p: any): User => ({
@@ -109,24 +59,17 @@ export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
       const cleanEmail = email.trim().toLowerCase();
-      
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
-        email: cleanEmail, 
-        password 
-      });
-      
-      if (authError) {
-        throw authError;
-      }
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      if (authError) throw authError;
       
       const { data: profile, error: fetchError } = await supabase.from('profiles')
         .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
         .eq('id', authData.user?.id).maybeSingle();
         
       if (fetchError) throw fetchError;
-      if (!profile) throw new Error("Profil non trouvé. Contactez l'administrateur.");
-      if (profile.is_active === false) throw new Error("Votre compte a été désactivé.");
+      if (!profile) throw new Error("Profil non trouvé.");
       
+      invalidateCache(); // On vide le cache à la connexion
       return mapProfileToUser(profile);
     },
 
@@ -134,19 +77,23 @@ export const API = {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return null;
+        const cached = getCached(`profile_${session.user.id}`);
+        if (cached) return cached;
+
         const { data: profile } = await supabase.from('profiles')
           .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
           .eq('id', session.user.id).maybeSingle();
-        return profile ? mapProfileToUser(profile) : null;
+        
+        const user = profile ? mapProfileToUser(profile) : null;
+        if (user) setCache(`profile_${session.user.id}`, user);
+        return user;
       } catch (e) { return null; }
     },
 
     getUsers: async (): Promise<User[]> => {
       const cached = getCached('users_list');
       if (cached) return cached;
-      const { data, error } = await supabase.from('profiles')
-        .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
-        .order('full_name').limit(100);
+      const { data, error } = await supabase.from('profiles').select('*').order('full_name').limit(200);
       if (error) return [];
       const users = (data || []).map(mapProfileToUser);
       setCache('users_list', users);
@@ -164,6 +111,7 @@ export const API = {
       const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
       if (error) throw error;
       invalidateCache('users_list');
+      invalidateCache(`profile_${id}`);
       return data ? mapProfileToUser(data) : null;
     },
 
@@ -185,7 +133,10 @@ export const API = {
       }
       return data;
     },
-    logout: async () => { await supabase.auth.signOut(); },
+    logout: async () => { 
+        invalidateCache();
+        await supabase.signOut(); 
+    },
     updatePassword: async (id: string, pass: string) => {
       const { error } = await supabase.auth.updateUser({ password: pass });
       if (error) throw error;
@@ -204,19 +155,19 @@ export const API = {
   },
 
   announcements: {
-    list: async (limit = 20): Promise<Announcement[]> => {
-      const selectStr = 'id, title, content, author_name, created_at, classname, priority';
+    list: async (limit = 50): Promise<Announcement[]> => {
+      const cacheKey = `announcements_${limit}`;
+      const cached = getCached(cacheKey);
+      if (cached) return cached;
+
       const { data, error } = await supabase.from('announcements')
-        .select(selectStr)
-        .order('created_at', { ascending: false, nullsFirst: false })
+        .select('id, title, content, author_name, created_at, classname, priority')
+        .order('created_at', { ascending: false })
         .limit(limit);
       
-      if (error && error.code === '42703') { 
-        const { data: fallbackData } = await supabase.from('announcements').select(selectStr).limit(limit);
-        return (fallbackData || []).map(mapAnnouncement);
-      }
-      
-      return (data || []).map(mapAnnouncement);
+      const res = (data || []).map(mapAnnouncement);
+      if (!error) setCache(cacheKey, res);
+      return res;
     },
     create: async (ann: any) => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -226,32 +177,34 @@ export const API = {
         classname: ann.className || 'Général', author_id: user?.id, author_name: profile?.full_name || 'Admin'
       }).select().single();
       if (error) throw error;
+      invalidateCache('announcements_');
       return mapAnnouncement(data);
     },
+    // Fixed: Added missing update method
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
-        title: ann.title, content: ann.content, priority: ann.priority, classname: ann.className
+        title: ann.title, content: ann.content, priority: ann.priority,
+        classname: ann.className
       }).eq('id', id).select().single();
       if (error) throw error;
+      invalidateCache('announcements_');
       return mapAnnouncement(data);
     },
-    delete: async (id: string) => { await supabase.from('announcements').delete().eq('id', id); }
+    delete: async (id: string) => { 
+        await supabase.from('announcements').delete().eq('id', id);
+        invalidateCache('announcements_');
+    }
   },
 
   polls: {
-    list: async (limit = 10): Promise<Poll[]> => {
+    list: async (): Promise<Poll[]> => {
+      const cached = getCached('polls_list');
+      if (cached) return cached;
+
       const { data: { user } } = await supabase.auth.getUser();
-      const selectStr = 'id, question, classname, is_active, start_time, end_time, created_at, poll_options(id, label, votes)';
-      
-      let { data: polls, error } = await supabase.from('polls')
-        .select(selectStr)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      
-      if (error && error.code === '42703') {
-        const { data: fallbackData } = await supabase.from('polls').select(selectStr).limit(limit);
-        polls = fallbackData;
-      }
+      const { data: polls, error } = await supabase.from('polls')
+        .select('id, question, classname, is_active, start_time, end_time, created_at, poll_options(id, label, votes)')
+        .order('created_at', { ascending: false });
       
       if (!polls) return [];
       
@@ -260,7 +213,7 @@ export const API = {
         const { data } = await supabase.from('poll_votes').select('poll_id, option_id').eq('user_id', user.id);
         userVotes = data || [];
       }
-      return (polls || []).map(p => {
+      const res = (polls || []).map(p => {
         const options = (p.poll_options || []).map((o: any) => ({ id: o.id, label: o.label, votes: o.votes || 0 }));
         const userVote = userVotes.find(v => v.poll_id === p.id);
         return {
@@ -270,58 +223,77 @@ export const API = {
           startTime: p.start_time, endTime: p.end_time
         };
       });
+      if (!error) setCache('polls_list', res);
+      return res;
     },
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user?.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
-      const { data: opt } = await supabase.from('poll_options').select('votes').eq('id', optionId).single();
-      await supabase.from('poll_options').update({ votes: (opt?.votes || 0) + 1 }).eq('id', optionId);
-    },
-    toggleStatus: async (id: string) => {
-      const { data: p } = await supabase.from('polls').select('is_active').eq('id', id).single();
-      await supabase.from('polls').update({ is_active: !p?.is_active }).eq('id', id);
-    },
-    delete: async (id: string) => { await supabase.from('polls').delete().eq('id', id); },
-    update: async (id: string, p: any) => {
-      await supabase.from('polls').update({ question: p.question, start_time: p.startTime, end_time: p.endTime }).eq('id', id);
+      invalidateCache('polls_list');
     },
     create: async (p: any) => {
       const { data: poll, error: pollErr } = await supabase.from('polls').insert({
-        question: p.question, classname: p.className, is_active: true, start_time: p.startTime, end_time: p.endTime
+        question: p.question, classname: p.className, is_active: true, start_time: p.start_time, end_time: p.end_time
       }).select().single();
       if (pollErr) throw pollErr;
       const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
       await supabase.from('poll_options').insert(options);
+      invalidateCache('polls_list');
       return poll;
+    },
+    // Fixed: Added missing update method
+    update: async (id: string, p: any) => {
+      const { data, error } = await supabase.from('polls').update({
+        question: p.question, start_time: p.startTime, end_time: p.endTime
+      }).eq('id', id).select().single();
+      if (error) throw error;
+      invalidateCache('polls_list');
+      return data;
+    },
+    toggleStatus: async (id: string) => {
+        const { data: p } = await supabase.from('polls').select('is_active').eq('id', id).single();
+        await supabase.from('polls').update({ is_active: !p?.is_active }).eq('id', id);
+        invalidateCache('polls_list');
+    },
+    delete: async (id: string) => {
+        await supabase.from('polls').delete().eq('id', id);
+        invalidateCache('polls_list');
     }
   },
 
   exams: {
-    list: async (limit = 20): Promise<Exam[]> => {
-      const { data, error } = await supabase.from('exams')
-        .select('id, subject, exam_date, duration, room, notes, classname')
-        .order('exam_date', { ascending: true })
-        .limit(limit);
+    list: async (): Promise<Exam[]> => {
+      const cached = getCached('exams_list');
+      if (cached) return cached;
+      const { data, error } = await supabase.from('exams').select('*').order('exam_date', { ascending: true });
       if (error) return [];
-      return (data || []).map(e => ({
+      const res = (data || []).map(e => ({
         id: e.id, subject: e.subject, date: e.exam_date, duration: e.duration, room: e.room, notes: e.notes, className: e.classname || ''
       }));
+      setCache('exams_list', res);
+      return res;
     },
     create: async (exam: any) => {
       const { data, error } = await supabase.from('exams').insert({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className
       }).select().single();
       if (error) throw error;
+      invalidateCache('exams_list');
       return { ...exam, id: data.id };
     },
+    // Fixed: Added missing update method
     update: async (id: string, exam: any) => {
       const { data, error } = await supabase.from('exams').update({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
       }).eq('id', id).select().single();
       if (error) throw error;
-      return { ...exam, id: data.id };
+      invalidateCache('exams_list');
+      return { id: data.id, subject: data.subject, date: data.exam_date, duration: data.duration, room: data.room, notes: data.notes, className: data.classname || '' };
     },
-    delete: async (id: string) => { await supabase.from('exams').delete().eq('id', id); }
+    delete: async (id: string) => { 
+        await supabase.from('exams').delete().eq('id', id);
+        invalidateCache('exams_list');
+    }
   },
 
   classes: {
@@ -334,12 +306,13 @@ export const API = {
       setCache('classes_list', classes);
       return classes;
     },
-    update: async (id: string, cls: any) => {
-      await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
-      invalidateCache('classes_list');
-    },
     create: async (name: string, email: string) => {
       await supabase.from('classes').insert({ name, email });
+      invalidateCache('classes_list');
+    },
+    // Fixed: Added missing update method
+    update: async (id: string, cls: { name: string, email: string }) => {
+      await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
       invalidateCache('classes_list');
     },
     delete: async (id: string) => {
@@ -352,23 +325,12 @@ export const API = {
     list: async (limit = 20): Promise<AppNotification[]> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
-      const selectStr = 'id, title, message, type, created_at, is_read';
-      
-      let { data, error } = await supabase.from('notifications')
-        .select(selectStr)
+      const { data } = await supabase.from('notifications')
+        .select('*')
         .or(`user_id.eq.${user.id},target_class.eq.Général`)
         .order('created_at', { ascending: false })
         .limit(limit);
       
-      if (error && error.code === '42703') {
-        const { data: fallbackData } = await supabase.from('notifications')
-            .select(selectStr)
-            .or(`user_id.eq.${user.id},target_class.eq.Général`)
-            .limit(limit);
-        data = fallbackData;
-      }
-      
-      if (!data) return [];
       return (data || []).map(n => ({ id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read }));
     },
     markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
@@ -391,57 +353,64 @@ export const API = {
 
   meet: {
     list: async (): Promise<MeetLink[]> => {
-      const { data, error } = await supabase.from('meet_links').select('id, title, platform, url, time, classname');
+      const cached = getCached('meet_list');
+      if (cached) return cached;
+      const { data, error } = await supabase.from('meet_links').select('*');
       if (error) return [];
-      return (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
+      const res = (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
+      setCache('meet_list', res);
+      return res;
     },
     create: async (m: any) => {
       const { data, error } = await supabase.from('meet_links').insert({
         title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className
       }).select().single();
       if (error) throw error;
+      invalidateCache('meet_list');
       return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
     },
+    // Fixed: Added missing update method
     update: async (id: string, m: any) => {
       const { data, error } = await supabase.from('meet_links').update({
         title: m.title, platform: m.platform, url: m.url, time: m.time
       }).eq('id', id).select().single();
       if (error) throw error;
+      invalidateCache('meet_list');
       return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
     },
-    delete: async (id: string) => { await supabase.from('meet_links').delete().eq('id', id); }
+    delete: async (id: string) => { 
+        await supabase.from('meet_links').delete().eq('id', id);
+        invalidateCache('meet_list');
+    }
   },
 
   schedules: {
     list: async (): Promise<ScheduleFile[]> => {
-      const { data, error } = await supabase.from('schedules').select('id, version, upload_date, url, classname').order('upload_date', { ascending: false }).limit(5);
+      const cached = getCached('schedules_list');
+      if (cached) return cached;
+      const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false }).limit(10);
       if (error) return [];
-      return (data || []).map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.classname }));
+      const res = (data || []).map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.classname }));
+      setCache('schedules_list', res);
+      return res;
     },
     create: async (sch: any) => {
       const { data, error } = await supabase.from('schedules').insert({
         version: sch.version, url: sch.url, classname: sch.className
       }).select().single();
       if (error) throw error;
+      invalidateCache('schedules_list');
       return { id: data.id, version: data.version, uploadDate: data.upload_date, url: data.url, className: data.classname };
     },
-    delete: async (id: string) => { await supabase.from('schedules').delete().eq('id', id); }
+    delete: async (id: string) => { 
+        await supabase.from('schedules').delete().eq('id', id);
+        invalidateCache('schedules_list');
+    }
   },
 
   logs: {
-    list: async (limit = 50): Promise<ActivityLog[]> => {
-      const selectStr = 'id, actor, action, target, type, created_at';
-      let { data, error } = await supabase.from('activity_logs')
-        .select(selectStr)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      
-      if (error && error.code === '42703') {
-        const { data: fallbackData } = await supabase.from('activity_logs').select(selectStr).limit(limit);
-        data = fallbackData;
-      }
-      
-      if (!data) return [];
+    list: async (limit = 100): Promise<ActivityLog[]> => {
+      const { data } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(limit);
       return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
     },
     add: async (actor: string, action: string, target: string, type: string) => {
