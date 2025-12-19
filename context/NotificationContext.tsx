@@ -35,12 +35,17 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     }
 
     const fetchNotifications = async () => {
-      const allNotifs = await API.notifications.list();
-      setNotifications(allNotifs);
+      try {
+        const allNotifs = await API.notifications.list();
+        setNotifications(allNotifs);
+      } catch (e) {
+        console.warn("Notification poll failed silently");
+      }
     };
 
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 5000);
+    // Optimization: Poll every 30s instead of 5s to save battery and network
+    const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, [user]);
 

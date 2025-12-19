@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2, X, Lock, Unlock, Loader2, AlertCircle, Share2, Pencil, CalendarClock, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Activity, Users } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole, Poll } from '../types';
@@ -24,23 +24,24 @@ export default function Polls() {
 
   const canManage = user?.role === UserRole.ADMIN || user?.role === UserRole.DELEGATE;
 
-  useEffect(() => {
-    fetchPolls();
-    const interval = setInterval(fetchPolls, 60000); 
-    return () => clearInterval(interval);
-  }, [user, adminViewClass]);
-
-  const fetchPolls = async () => {
+  const fetchPolls = useCallback(async (showLoader = false) => {
     try {
-      if(polls.length === 0) setLoading(true); 
+      if(showLoader) setLoading(true); 
       const data = await API.polls.list();
       setPolls(data);
     } catch (error) {
       addNotification({ title: 'Erreur', message: 'Impossible de charger.', type: 'alert' });
     } finally {
-      setLoading(false);
+      if(showLoader) setLoading(false);
     }
-  };
+  }, [addNotification]);
+
+  useEffect(() => {
+    fetchPolls(true);
+    // Optimized: Refresh every 2 minutes instead of 1 minute
+    const interval = setInterval(() => fetchPolls(false), 120000); 
+    return () => clearInterval(interval);
+  }, [fetchPolls, user, adminViewClass]);
 
   const displayedPolls = useMemo(() => {
     return polls.filter(poll => {
@@ -92,7 +93,6 @@ export default function Polls() {
       const currentPoll = polls.find(p => p.id === pollId);
       const isChangingVote = currentPoll?.hasVoted;
 
-      // Fixed: Removed user.id as the API method only takes 2 arguments
       await API.polls.vote(pollId, optionId);
       
       addNotification({ 
@@ -100,7 +100,7 @@ export default function Polls() {
           message: isChangingVote ? 'Votre nouveau choix a été enregistré.' : 'Choix enregistré.', 
           type: 'success' 
       });
-      fetchPolls();
+      fetchPolls(false);
     } catch (error: any) {
       addNotification({ title: 'Erreur', message: error.message || 'Impossible de voter.', type: 'alert' });
     }
@@ -109,7 +109,7 @@ export default function Polls() {
   const handleToggleStatus = async (poll: Poll) => {
     try {
       await API.polls.toggleStatus(poll.id);
-      fetchPolls();
+      fetchPolls(false);
     } catch (error) {
        addNotification({ title: 'Erreur', message: 'Impossible de changer le statut.', type: 'alert' });
     }
@@ -168,14 +168,14 @@ export default function Polls() {
 
       if (editingId) {
         await API.polls.update(editingId, payload);
-        fetchPolls();
+        fetchPolls(false);
         addNotification({ title: 'Succès', message: 'Sondage mis à jour.', type: 'success' });
       } else {
         payload.className = targetClass;
-        payload.options = validOptions.map((label, idx) => ({ label }));
+        payload.options = validOptions.map((label) => ({ label }));
         
         await API.polls.create(payload);
-        fetchPolls(); // Re-fetch to get new ID properly
+        fetchPolls(false); 
         addNotification({ title: 'Sondage créé', message: 'Succès.', type: 'success' });
       }
 

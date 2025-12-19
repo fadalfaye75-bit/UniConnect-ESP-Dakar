@@ -6,7 +6,7 @@ import { API } from '../services/api';
 import { 
   Users, BookOpen, UserPlus, Search, Loader2, School, 
   Plus, Trash2, LayoutDashboard, Shield, 
-  Ban, CheckCircle, PenSquare, Activity, Copy, Save
+  Ban, CheckCircle, PenSquare, Activity, Copy, Save, AlertCircle, Info
 } from 'lucide-react';
 import { UserRole, ClassGroup, ActivityLog, User } from '../types';
 import Modal from '../components/Modal';
@@ -85,6 +85,12 @@ export default function AdminPanel() {
   // ACTIONS UTILISATEURS
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!newUser.fullName || !newUser.email) {
+      addNotification({ title: 'Données manquantes', message: 'Veuillez remplir tous les champs.', type: 'warning' });
+      return;
+    }
+
     setSubmitting(true);
     try {
       await API.auth.createUser({
@@ -95,13 +101,17 @@ export default function AdminPanel() {
         schoolName: newUser.schoolName
       }, user?.name || 'Admin');
       
+      // On rafraîchit les données après la création
       await fetchGlobalData();
+      
       setIsUserModalOpen(false);
       setNewUser({ fullName: '', email: '', role: UserRole.STUDENT, className: '', schoolName: 'ESP Dakar' });
-      addNotification({ title: 'Succès', message: 'Utilisateur créé. MDP par défaut : passer25', type: 'success' });
+      addNotification({ title: 'Compte créé avec succès', message: 'L\'utilisateur peut maintenant se connecter avec le MDP : passer25', type: 'success' });
     } catch (error: any) {
-      addNotification({ title: 'Erreur', message: error?.message || "Erreur de création", type: 'alert' });
-    } finally { setSubmitting(false); }
+      addNotification({ title: 'Erreur de création', message: error?.message || "Impossible de créer le compte.", type: 'alert' });
+    } finally { 
+      setSubmitting(false); 
+    }
   };
 
   const handleOpenEditUser = (u: User) => {
@@ -215,185 +225,201 @@ export default function AdminPanel() {
                  <Shield size={18} className="text-primary-200" />
                  <span className="font-bold text-xs uppercase">Sécurité Active</span>
              </div>
-             <p className="text-[10px] opacity-80 leading-relaxed">MDP par défaut : <strong>passer25</strong>.<br/>Note : Pensez à corriger les politiques RLS dans Supabase pour éviter la récursion.</p>
+             <p className="text-[10px] opacity-80 leading-relaxed">MDP par défaut : <strong>passer25</strong>.<br/>Note : Pensez à désactiver 'Confirm Email' dans Supabase.</p>
          </div>
       </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar pb-20">
          
-         {activeTab === 'dashboard' && (
-            <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Utilisateurs</p>
-                        <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{dashboardStats.usersCount}</h3>
-                        <div className="mt-2 flex items-center gap-1 text-[10px] text-green-500 font-bold uppercase"><CheckCircle size={10} /> Base synchronisée</div>
-                    </div>
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Classes</p>
-                        <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{dashboardStats.classesCount}</h3>
-                        <div className="mt-2 flex items-center gap-1 text-[10px] text-blue-500 font-bold uppercase"><School size={10} /> ESP Dakar</div>
-                    </div>
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <p className="text-xs font-bold text-gray-400 uppercase">Serveur</p>
-                        <div className="flex items-center gap-2 mt-3">
-                            <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
-                            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Opérationnel</span>
+         {loading && !users.length ? (
+            <div className="flex justify-center items-center h-64">
+                <Loader2 className="animate-spin text-primary-500" size={40} />
+            </div>
+         ) : (
+            <>
+                {activeTab === 'dashboard' && (
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
+                                <p className="text-xs font-bold text-gray-400 uppercase">Utilisateurs</p>
+                                <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{dashboardStats.usersCount}</h3>
+                                <div className="mt-2 flex items-center gap-1 text-[10px] text-green-500 font-bold uppercase"><CheckCircle size={10} /> Base synchronisée</div>
+                            </div>
+                            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
+                                <p className="text-xs font-bold text-gray-400 uppercase">Classes</p>
+                                <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-1">{dashboardStats.classesCount}</h3>
+                                <div className="mt-2 flex items-center gap-1 text-[10px] text-blue-500 font-bold uppercase"><School size={10} /> ESP Dakar</div>
+                            </div>
+                            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
+                                <p className="text-xs font-bold text-gray-400 uppercase">Serveur</p>
+                                <div className="flex items-center gap-2 mt-3">
+                                    <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+                                    <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Opérationnel</span>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                </div>
 
-                <div className="grid lg:grid-cols-2 gap-6">
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Users size={18} /> Rôles</h3>
-                        <div className="h-64">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie data={dashboardStats.rolesData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" animationDuration={1000}>
-                                        {dashboardStats.rolesData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                                    </Pie>
-                                    <RechartsTooltip />
-                                    <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: '12px' }} />
-                                </PieChart>
-                            </ResponsiveContainer>
+                        <div className="grid lg:grid-cols-2 gap-6">
+                            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
+                                <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Users size={18} /> Rôles</h3>
+                                <div className="h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie data={dashboardStats.rolesData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" animationDuration={1000}>
+                                                {dashboardStats.rolesData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                                            </Pie>
+                                            <RechartsTooltip />
+                                            <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: '12px' }} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
+                                <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Activity size={18} /> Logs récents</h3>
+                                <div className="space-y-4 max-h-[300px] overflow-y-auto">
+                                    {dashboardStats.recentLogs.map(log => (
+                                        <div key={log.id} className="text-xs p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600">
+                                            <div className="font-bold">{log.action}</div>
+                                            <div className="text-gray-400 mt-1">{new Date(log.timestamp).toLocaleString()} • Par {log.actor}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700">
-                        <h3 className="font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2"><Activity size={18} /> Logs récents</h3>
-                        <div className="space-y-4 max-h-[300px] overflow-y-auto">
-                            {dashboardStats.recentLogs.map(log => (
-                                <div key={log.id} className="text-xs p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600">
-                                    <div className="font-bold">{log.action}</div>
-                                    <div className="text-gray-400 mt-1">{new Date(log.timestamp).toLocaleString()} • Par {log.actor}</div>
+                )}
+                
+                {activeTab === 'users' && (
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
+                        <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50/50 dark:bg-gray-800">
+                            <div className="relative w-full md:w-80">
+                                <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+                                <input type="text" placeholder="Recherche nom, mail..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 rounded-lg text-sm outline-none" />
+                            </div>
+                            <button onClick={() => setIsUserModalOpen(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5">
+                                <UserPlus size={18} /> Créer un compte
+                            </button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 text-[10px] font-bold uppercase tracking-wider">
+                                    <tr>
+                                        <th className="px-6 py-4">Utilisateur</th>
+                                        <th className="px-6 py-4">Rôle</th>
+                                        <th className="px-6 py-4">Classe</th>
+                                        <th className="px-6 py-4 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                                    {filteredUsers.map(u => (
+                                        <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors group">
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={u.avatar} className={`w-9 h-9 rounded-full bg-gray-100 ${!u.isActive ? 'grayscale opacity-50' : ''}`} alt="" />
+                                                    <div className="min-w-0">
+                                                        <p className={`font-bold truncate ${!u.isActive ? 'text-gray-400' : 'text-gray-900 dark:text-white'}`}>{u.name}</p>
+                                                        <p className="text-[10px] text-gray-400 truncate">{u.email}</p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                                                    u.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-600 border-purple-100 dark:bg-purple-900/30' : 
+                                                    u.role === UserRole.DELEGATE ? 'bg-green-50 text-green-600 border-green-100 dark:bg-green-900/30' : 
+                                                    'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-900/30'
+                                                }`}>
+                                                    {u.role}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-gray-500 dark:text-gray-400 text-xs">{u.className || '-'}</td>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex items-center justify-end gap-1">
+                                                    <button onClick={() => handleCopyUserDetails(u)} className="p-2 text-gray-400 hover:text-primary-500 transition-colors" title="Copier coordonnées">
+                                                        <Copy size={16} />
+                                                    </button>
+                                                    <button onClick={() => handleOpenEditUser(u)} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Modifier">
+                                                        <PenSquare size={16} />
+                                                    </button>
+                                                    <button onClick={() => handleToggleStatus(u.id)} className={`p-2 rounded-lg transition-colors ${!u.isActive ? 'text-green-500' : 'text-orange-400'}`} title={u.isActive ? 'Désactiver' : 'Réactiver'}>
+                                                        {u.isActive ? <Ban size={16} /> : <CheckCircle size={16} />}
+                                                    </button>
+                                                    <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Supprimer">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'classes' && (
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
+                        <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800">
+                            <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><School size={20} className="text-primary-500" /> Gestion des Classes</h3>
+                            <button onClick={() => openClassModal()} className="bg-primary-500 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-md">Ajouter une classe</button>
+                        </div>
+                        <div className="p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {classesList.map(cls => (
+                                <div key={cls.id} className="p-4 bg-gray-50 dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 group relative">
+                                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => openClassModal(cls)} className="p-1.5 text-gray-400 hover:text-blue-500"><PenSquare size={14} /></button>
+                                        <button onClick={() => API.classes.delete(cls.id, user?.name || 'Admin').then(fetchGlobalData)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                                    </div>
+                                    <h4 className="font-bold text-gray-900 dark:text-white">{cls.name}</h4>
+                                    <p className="text-xs text-gray-400 mt-1">{cls.email || 'Pas d\'email collectif'}</p>
                                 </div>
                             ))}
                         </div>
                     </div>
-                </div>
-            </div>
-         )}
-         
-         {activeTab === 'users' && (
-             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
-                 <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50/50 dark:bg-gray-800">
-                     <div className="relative w-full md:w-80">
-                         <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                         <input type="text" placeholder="Recherche nom, mail..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 rounded-lg text-sm outline-none" />
-                     </div>
-                     <button onClick={() => setIsUserModalOpen(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5">
-                         <UserPlus size={18} /> Créer un compte
-                     </button>
-                 </div>
-                 <div className="overflow-x-auto">
-                     <table className="w-full text-left text-sm">
-                         <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 text-[10px] font-bold uppercase tracking-wider">
-                             <tr>
-                                 <th className="px-6 py-4">Utilisateur</th>
-                                 <th className="px-6 py-4">Rôle</th>
-                                 <th className="px-6 py-4">Classe</th>
-                                 <th className="px-6 py-4 text-right">Actions</th>
-                             </tr>
-                         </thead>
-                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                             {filteredUsers.map(u => (
-                                 <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors group">
-                                     <td className="px-6 py-4">
-                                         <div className="flex items-center gap-3">
-                                             <img src={u.avatar} className={`w-9 h-9 rounded-full bg-gray-100 ${!u.isActive ? 'grayscale opacity-50' : ''}`} alt="" />
-                                             <div className="min-w-0">
-                                                 <p className={`font-bold truncate ${!u.isActive ? 'text-gray-400' : 'text-gray-900 dark:text-white'}`}>{u.name}</p>
-                                                 <p className="text-[10px] text-gray-400 truncate">{u.email}</p>
-                                             </div>
-                                         </div>
-                                     </td>
-                                     <td className="px-6 py-4">
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                                            u.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-600 border-purple-100 dark:bg-purple-900/30' : 
-                                            u.role === UserRole.DELEGATE ? 'bg-green-50 text-green-600 border-green-100 dark:bg-green-900/30' : 
-                                            'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-900/30'
-                                        }`}>
-                                            {u.role}
-                                        </span>
-                                     </td>
-                                     <td className="px-6 py-4 text-gray-500 dark:text-gray-400 text-xs">{u.className || '-'}</td>
-                                     <td className="px-6 py-4 text-right">
-                                         <div className="flex items-center justify-end gap-1">
-                                             <button onClick={() => handleCopyUserDetails(u)} className="p-2 text-gray-400 hover:text-primary-500 transition-colors" title="Copier coordonnées">
-                                                 <Copy size={16} />
-                                             </button>
-                                             <button onClick={() => handleOpenEditUser(u)} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Modifier">
-                                                 <PenSquare size={16} />
-                                             </button>
-                                             <button onClick={() => handleToggleStatus(u.id)} className={`p-2 rounded-lg transition-colors ${!u.isActive ? 'text-green-500' : 'text-orange-400'}`} title={u.isActive ? 'Désactiver' : 'Réactiver'}>
-                                                 {u.isActive ? <Ban size={16} /> : <CheckCircle size={16} />}
-                                             </button>
-                                             <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Supprimer">
-                                                 <Trash2 size={16} />
-                                             </button>
-                                         </div>
-                                     </td>
-                                 </tr>
-                             ))}
-                         </tbody>
-                     </table>
-                 </div>
-             </div>
-         )}
+                )}
 
-         {activeTab === 'classes' && (
-             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
-                 <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800">
-                     <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><School size={20} className="text-primary-500" /> Gestion des Classes</h3>
-                     <button onClick={() => openClassModal()} className="bg-primary-500 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-md">Ajouter une classe</button>
-                 </div>
-                 <div className="p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                     {classesList.map(cls => (
-                         <div key={cls.id} className="p-4 bg-gray-50 dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 group relative">
-                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => openClassModal(cls)} className="p-1.5 text-gray-400 hover:text-blue-500"><PenSquare size={14} /></button>
-                                <button onClick={() => API.classes.delete(cls.id, user?.name || 'Admin').then(fetchGlobalData)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
-                             </div>
-                             <h4 className="font-bold text-gray-900 dark:text-white">{cls.name}</h4>
-                             <p className="text-xs text-gray-400 mt-1">{cls.email || 'Pas d\'email collectif'}</p>
-                         </div>
-                     ))}
-                 </div>
-             </div>
-         )}
-
-         {activeTab === 'logs' && (
-             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
-                <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 dark:bg-gray-700 font-bold uppercase text-gray-400">
-                        <tr>
-                            <th className="px-6 py-3">Date</th>
-                            <th className="px-6 py-3">Acteur</th>
-                            <th className="px-6 py-3">Action</th>
-                            <th className="px-6 py-3">Cible</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                        {logs.map(log => (
-                            <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
-                                <td className="px-6 py-3 text-gray-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
-                                <td className="px-6 py-3 font-bold text-gray-700 dark:text-gray-200">{log.actor}</td>
-                                <td className="px-6 py-3"><span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded uppercase font-bold text-[9px] border border-gray-200 dark:border-gray-600">{log.action}</span></td>
-                                <td className="px-6 py-3 italic text-gray-500 dark:text-gray-400">{log.target}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-             </div>
+                {activeTab === 'logs' && (
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
+                        <table className="w-full text-left text-xs">
+                            <thead className="bg-gray-50 dark:bg-gray-700 font-bold uppercase text-gray-400">
+                                <tr>
+                                    <th className="px-6 py-3">Date</th>
+                                    <th className="px-6 py-3">Acteur</th>
+                                    <th className="px-6 py-3">Action</th>
+                                    <th className="px-6 py-3">Cible</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                                {logs.map(log => (
+                                    <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
+                                        <td className="px-6 py-3 text-gray-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
+                                        <td className="px-6 py-3 font-bold text-gray-700 dark:text-gray-200">{log.actor}</td>
+                                        <td className="px-6 py-3"><span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded uppercase font-bold text-[9px] border border-gray-200 dark:border-gray-600">{log.action}</span></td>
+                                        <td className="px-6 py-3 italic text-gray-500 dark:text-gray-400">{log.target}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </>
          )}
       </div>
 
       {/* CREATE USER MODAL */}
       <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Nouveau compte">
          <form onSubmit={handleCreateUser} className="space-y-4">
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 text-[10px] text-blue-700 dark:text-blue-300 font-bold flex items-center gap-2 mb-2">
-                <Shield size={14} /> LE MOT DE PASSE PAR DÉFAUT SERA : passer25
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800 space-y-2">
+                <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300 font-bold text-xs uppercase">
+                    <Shield size={16} /> Rappels importants
+                </div>
+                <ul className="text-[10px] text-blue-600 dark:text-blue-400 space-y-1 list-disc pl-4 font-medium">
+                    <li>Mot de passe par défaut : <strong>passer25</strong></li>
+                    <li>Vérifiez que <strong>'Confirm Email'</strong> est désactivé dans Supabase Auth</li>
+                    <li>Vérifiez les politiques <strong>RLS</strong> de la table 'profiles'</li>
+                </ul>
             </div>
+
             <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nom Complet</label>
                 <input required className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" placeholder="Jean Dupont" value={newUser.fullName} onChange={e => setNewUser({...newUser, fullName: e.target.value})} />
@@ -419,8 +445,14 @@ export default function AdminPanel() {
                    </select>
                </div>
             </div>
-            <button disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl shadow-lg mt-4 disabled:opacity-50 transition-all hover:bg-primary-600">
-                {submitting ? <Loader2 className="animate-spin mx-auto" /> : 'Créer l\'utilisateur'}
+
+            <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-dashed border-gray-200 dark:border-gray-600 flex gap-2">
+                <Info size={16} className="text-gray-400 shrink-0" />
+                <p className="text-[10px] text-gray-500 leading-tight">Cette action créera un compte Auth et une entrée dans la table Profiles. Aucun mail ne sera envoyé si 'Confirm Email' est OFF.</p>
+            </div>
+
+            <button disabled={submitting} type="submit" className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl shadow-lg mt-2 disabled:opacity-50 transition-all hover:bg-primary-600 flex justify-center items-center gap-2">
+                {submitting ? <Loader2 className="animate-spin" /> : 'Créer l\'utilisateur'}
             </button>
          </form>
       </Modal>
@@ -454,7 +486,7 @@ export default function AdminPanel() {
                        </select>
                    </div>
                 </div>
-                <button disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl shadow-lg mt-4 flex items-center justify-center gap-2 hover:bg-primary-600 transition-all">
+                <button disabled={submitting} type="submit" className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl shadow-lg mt-4 flex items-center justify-center gap-2 hover:bg-primary-600 transition-all">
                     {submitting ? <Loader2 className="animate-spin" /> : <Save size={18} />}
                     Enregistrer les modifications
                 </button>
@@ -472,8 +504,8 @@ export default function AdminPanel() {
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email groupe</label>
                   <input type="email" className="w-full p-2.5 rounded-lg border border-gray-300 dark:bg-gray-700 text-sm outline-none dark:text-white" value={classFormData.email} onChange={e => setClassFormData({...classFormData, email: e.target.value})} />
               </div>
-              <button disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl mt-2 hover:bg-primary-600 transition-all shadow-md">
-                  {submitting ? <Loader2 className="animate-spin mx-auto" /> : 'Enregistrer'}
+              <button disabled={submitting} type="submit" className="w-full bg-primary-500 text-white font-bold py-3 rounded-xl mt-2 hover:bg-primary-600 transition-all shadow-md flex justify-center items-center">
+                  {submitting ? <Loader2 className="animate-spin" /> : 'Enregistrer'}
               </button>
           </form>
       </Modal>

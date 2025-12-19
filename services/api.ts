@@ -1,8 +1,23 @@
 
-import { supabase } from './supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+import { supabase, supabaseUrl, supabaseKey } from './supabaseClient';
 import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotification, Poll, MeetLink, ScheduleFile } from '../types';
 
 const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8`;
+
+// Simple cache for static data
+const CACHE: Record<string, { data: any, timestamp: number }> = {};
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const getCached = (key: string) => {
+    const entry = CACHE[key];
+    if (entry && Date.now() - entry.timestamp < CACHE_TTL) return entry.data;
+    return null;
+};
+
+const setCache = (key: string, data: any) => {
+    CACHE[key] = { data, timestamp: Date.now() };
+};
 
 const mapProfileToUser = (p: any): User => ({
   id: p.id,
@@ -35,21 +50,17 @@ const handleError = (error: any) => {
   console.error("--- SUPABASE ERROR DETAILS ---", error);
   
   let msg = "Une erreur est survenue lors de l'opération.";
-  
-  if (typeof error === 'string') {
-    msg = error;
-  } else if (error.message) {
-    msg = error.message;
-  } else if (error.error_description) {
-    msg = error.error_description;
-  } else {
-    msg = JSON.stringify(error);
-  }
+  if (typeof error === 'string') msg = error;
+  else if (error.message) msg = error.message;
+  else if (error.error_description) msg = error.error_description;
+  else msg = JSON.stringify(error);
 
   if (msg.includes("row-level security") || msg.includes("RLS")) {
-    msg = "Accès refusé : vous n'avez pas les permissions nécessaires.";
-  } else if (msg.includes("column \"links\"")) {
-    msg = "Erreur de schéma : La colonne 'links' est absente. Les fonctionnalités de liens externes sont désactivées.";
+    msg = "Accès refusé : Vérifiez les politiques RLS sur Supabase.";
+  } else if (msg.includes("User already registered")) {
+    msg = "Cet email est déjà utilisé par un autre compte.";
+  } else if (msg.includes("Email confirmation")) {
+    msg = "Désactivez 'Confirm Email' dans les paramètres Auth de Supabase.";
   }
   
   throw new Error(msg);
@@ -80,9 +91,14 @@ export const API = {
     },
 
     getUsers: async (): Promise<User[]> => {
+      const cached = getCached('users_list');
+      if (cached) return cached;
+
       const { data, error } = await supabase.from('profiles').select('*').order('full_name');
       if (error) return [];
-      return (data || []).map(mapProfileToUser);
+      const users = (data || []).map(mapProfileToUser);
+      setCache('users_list', users);
+      return users;
     },
 
     updateProfile: async (id: string, updates: Partial<User>, adminName?: string) => {
@@ -94,6 +110,7 @@ export const API = {
       const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
       if (error) handleError(error);
       
+      delete CACHE['users_list']; // Invalidate cache
       if (adminName && updates.email) await API.logs.add(adminName, 'Mise à jour profil', updates.email, 'update');
       return data ? mapProfileToUser(data) : null;
     },
@@ -102,6 +119,7 @@ export const API = {
       const { data: current } = await supabase.from('profiles').select('is_active, email').eq('id', userId).single();
       const { error } = await supabase.from('profiles').update({ is_active: !current?.is_active }).eq('id', userId);
       if (error) handleError(error);
+      delete CACHE['users_list'];
       await API.logs.add(adminName, 'Changement statut', current?.email || userId, 'security');
     },
 
@@ -109,23 +127,38 @@ export const API = {
       const { data: profile } = await supabase.from('profiles').select('email').eq('id', userId).single();
       const { error } = await supabase.from('profiles').delete().eq('id', userId);
       if (error) handleError(error);
+      delete CACHE['users_list'];
       if (adminName) await API.logs.add(adminName, 'Suppression utilisateur', profile?.email || userId, 'delete');
     },
 
     createUser: async (user: any, adminName: string) => {
-      const { data, error } = await supabase.auth.signUp({ email: user.email.trim(), password: 'passer25' });
+      const tempClient = createClient(supabaseUrl, supabaseKey, {
+        auth: { persistSession: false }
+      });
+
+      const { data, error } = await tempClient.auth.signUp({ 
+        email: user.email.trim(), 
+        password: 'passer25',
+        options: {
+          data: { full_name: user.name, role: user.role.toLowerCase() }
+        }
+      });
+
       if (error) handleError(error);
+      
       if (data.user) {
-          const { error: profileError } = await supabase.from('profiles').insert({
+          const { error: profileError } = await supabase.from('profiles').upsert({
               id: data.user.id,
               full_name: user.name,
               email: user.email.trim(),
               role: user.role.toLowerCase(),
-              classname: user.className,
+              classname: user.className || '',
               is_active: true,
               avatar_url: getInitialsAvatar(user.name)
-          });
+          }, { onConflict: 'id' });
+          
           if (profileError) handleError(profileError);
+          delete CACHE['users_list'];
           await API.logs.add(adminName, 'Création utilisateur', user.email, 'create');
       }
       return data;
@@ -277,26 +310,34 @@ export const API = {
 
   classes: {
     list: async (): Promise<ClassGroup[]> => {
+      const cached = getCached('classes_list');
+      if (cached) return cached;
+
       const { data, error } = await supabase.from('classes').select('*').order('name');
       if (error) return [];
-      return (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
+      const classes = (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
+      setCache('classes_list', classes);
+      return classes;
     },
 
     create: async (name: string, email: string, adminName?: string) => {
       const { error } = await supabase.from('classes').insert({ name, email });
       if (error) handleError(error);
+      delete CACHE['classes_list'];
       if (adminName) await API.logs.add(adminName, 'Création classe', name, 'create');
     },
 
     update: async (id: string, cls: any, adminName?: string) => {
       const { error } = await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
       if (error) handleError(error);
+      delete CACHE['classes_list'];
       if (adminName) await API.logs.add(adminName, 'Mise à jour classe', cls.name, 'update');
     },
 
     delete: async (id: string, adminName?: string) => {
       const { error } = await supabase.from('classes').delete().eq('id', id);
       if (error) handleError(error);
+      delete CACHE['classes_list'];
       if (adminName) await API.logs.add(adminName, 'Suppression classe', id, 'delete');
     }
   },
