@@ -2,22 +2,79 @@
 
 UniConnect est une plateforme de gestion scolaire universitaire centralisée pour l'ESP de Dakar.
 
-## 🚀 Optimisation des Consultations (Vitesse & Fluidité SQL)
+## 🛠 Script SQL de Configuration (Sondages & Profils)
 
-Pour garantir que l'onglet **Consultations** reste fluide même avec des milliers de votes simultanés, exécutez ce script dans votre éditeur SQL Supabase :
+Voici le script complet à copier et exécuter dans le **SQL Editor de Supabase** pour initialiser la base de données nécessaire au bon fonctionnement des sondages et de la gestion des accès.
 
 ```sql
--- 1. CACHE DE COMPTEUR (Dénormalisation pour lecture instantanée)
-ALTER TABLE public.poll_options ADD COLUMN IF NOT EXISTS votes INTEGER DEFAULT 0;
+-- ==========================================
+-- 1. TABLE DES PROFILS (Core Identity)
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
+    full_name TEXT,
+    email TEXT,
+    role TEXT DEFAULT 'student',
+    classname TEXT,
+    school_name TEXT DEFAULT 'ESP Dakar',
+    avatar_url TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
--- 2. INDEXATION STRATÉGIQUE (Recherche ultra-rapide)
--- Accélère le chargement de la liste des sondages par classe
-CREATE INDEX IF NOT EXISTS idx_polls_classname_active ON public.polls (classname, is_active);
--- Accélère la vérification "l'utilisateur a-t-il déjà voté ?"
-CREATE INDEX IF NOT EXISTS idx_poll_votes_user_poll ON public.poll_votes (user_id, poll_id);
+-- Activation RLS Profils
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
--- 3. TRIGGER ATOMIQUE (Mise à jour en temps réel des compteurs)
-CREATE OR REPLACE FUNCTION public.sync_poll_votes_count()
+CREATE POLICY "Profils visibles par tous" ON public.profiles
+    FOR SELECT USING (true);
+
+CREATE POLICY "Modification propre profil" ON public.profiles
+    FOR UPDATE USING (auth.uid() = id);
+
+-- ==========================================
+-- 2. SYSTÈME DE SONDAGES
+-- ==========================================
+
+-- Table des sondages
+CREATE TABLE IF NOT EXISTS public.polls (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    question TEXT NOT NULL,
+    classname TEXT DEFAULT 'Général',
+    is_active BOOLEAN DEFAULT true,
+    creator_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Table des options
+CREATE TABLE IF NOT EXISTS public.poll_options (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    poll_id UUID REFERENCES public.polls(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    votes INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Table des votes (Contrainte d'unicité par utilisateur/sondage)
+CREATE TABLE IF NOT EXISTS public.poll_votes (
+    poll_id UUID REFERENCES public.polls(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    option_id UUID REFERENCES public.poll_options(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    PRIMARY KEY (poll_id, user_id)
+);
+
+-- ==========================================
+-- 3. INDEX & PERFORMANCE
+-- ==========================================
+CREATE INDEX IF NOT EXISTS idx_polls_classname ON public.polls(classname);
+CREATE INDEX IF NOT EXISTS idx_poll_options_poll_id ON public.poll_options(poll_id);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_user_id ON public.poll_votes(user_id);
+
+-- ==========================================
+-- 4. LOGIQUE ATOMIQUE (Trigger de votes)
+-- ==========================================
+-- Maintient le compteur de votes synchronisé sans requêtes COUNT lourdes
+CREATE OR REPLACE FUNCTION public.handle_poll_vote_sync()
 RETURNS TRIGGER AS $$
 BEGIN
     IF (TG_OP = 'INSERT') THEN
@@ -34,29 +91,52 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS tr_sync_poll_votes ON public.poll_votes;
-CREATE TRIGGER tr_sync_poll_votes
+DROP TRIGGER IF EXISTS tr_poll_vote_sync ON public.poll_votes;
+CREATE TRIGGER tr_poll_vote_sync
 AFTER INSERT OR UPDATE OR DELETE ON public.poll_votes
-FOR EACH ROW EXECUTE FUNCTION public.sync_poll_votes_count();
+FOR EACH ROW EXECUTE FUNCTION public.handle_poll_vote_sync();
 
--- 4. POLITIQUES DE SÉCURITÉ (RLS) - Permet aux étudiants de voter
+-- ==========================================
+-- 5. POLITIQUES DE SÉCURITÉ (RLS SONDAGES)
+-- ==========================================
+ALTER TABLE public.polls ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.poll_options ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.poll_votes ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Students_can_vote" ON public.poll_votes;
-CREATE POLICY "Students_can_vote" ON public.poll_votes
-FOR INSERT WITH CHECK (
-    EXISTS (
-        SELECT 1 FROM public.polls p
-        JOIN public.profiles pr ON pr.id = auth.uid()
-        WHERE p.id = poll_id 
-        AND (p.classname = 'Général' OR p.classname = pr.classname OR pr.role IN ('admin', 'delegate'))
-    )
+-- Sondages : Visibles si publics, ou pour la classe, ou si admin/délégué
+CREATE POLICY "Lecture Sondages" ON public.polls
+FOR SELECT TO authenticated
+USING (
+    classname = 'Général' OR 
+    classname = (SELECT classname FROM public.profiles WHERE id = auth.uid()) OR
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'delegate'))
 );
 
--- 5. INITIALISATION
-UPDATE public.poll_options po SET votes = (SELECT count(*) FROM public.poll_votes pv WHERE pv.option_id = po.id);
+-- Sondages : Modification par Admin et Délégués uniquement
+CREATE POLICY "Gestion Sondages" ON public.polls
+FOR ALL TO authenticated
+USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'delegate')));
+
+-- Options : Lecture ouverte
+CREATE POLICY "Lecture Options" ON public.poll_options
+FOR SELECT TO authenticated
+USING (true);
+
+-- Votes : Insertion uniquement pour soi-même et sur sondage actif
+CREATE POLICY "Action de Voter" ON public.poll_votes
+FOR INSERT TO authenticated
+WITH CHECK (
+    auth.uid() = user_id AND
+    EXISTS (SELECT 1 FROM public.polls WHERE id = poll_id AND is_active = true)
+);
+
+-- Votes : Lecture de ses propres choix
+CREATE POLICY "Lecture propre vote" ON public.poll_votes
+FOR SELECT TO authenticated
+USING (auth.uid() = user_id);
 ```
 
-## 🛠 Variables d'Environnement
-- `VITE_SUPABASE_URL` : URL de votre projet Supabase.
-- `VITE_SUPABASE_ANON_KEY` : Clé API anonyme.
+## 🛠 Configuration Supabase
+1. Créez un projet sur [Supabase](https://supabase.com).
+2. Copiez l'URL et la clé ANON dans `services/supabaseClient.ts`.
+3. Désactivez **"Confirm Email"** dans *Authentication > Settings* pour faciliter les tests.

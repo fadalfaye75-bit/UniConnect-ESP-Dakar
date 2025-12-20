@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Trash2, X, Lock, Unlock, Loader2, Pencil, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Users, Search, Vote, AlertTriangle, Sparkles, Filter, FilterX, Shield } from 'lucide-react';
+import { Plus, Trash2, X, Lock, Unlock, Loader2, Pencil, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Users, Search, Vote, AlertTriangle, Sparkles, Filter, FilterX, Shield, Award } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole, Poll, ClassGroup } from '../types';
 import Modal from '../components/Modal';
@@ -148,7 +148,6 @@ export default function Polls() {
       }
   };
 
-  // Palette de couleurs avec dégradés (paires de couleurs)
   const COLOR_PALETTE = [
     { start: '#0ea5e9', end: '#38bdf8' }, // Bleu
     { start: '#10b981', end: '#34d399' }, // Émeraude
@@ -156,6 +155,11 @@ export default function Polls() {
     { start: '#f43f5e', end: '#fb7185' }, // Rose/Rouge
     { start: '#8b5cf6', end: '#a78bfa' }, // Violet
   ];
+
+  const winnerOption = useMemo(() => {
+    if (!selectedPollForResults) return null;
+    return [...selectedPollForResults.options].sort((a,b) => b.votes - a.votes)[0];
+  }, [selectedPollForResults]);
 
   if (loading) return (
     <div className="flex flex-col justify-center items-center h-64 gap-4">
@@ -338,7 +342,7 @@ export default function Polls() {
       <Modal isOpen={isResultsModalOpen} onClose={() => setIsResultsModalOpen(false)} title="Analyse des résultats">
         {selectedPollForResults && (
           <div className="space-y-8">
-             <div className="h-[320px] w-full">
+             <div className="h-[320px] w-full relative">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                         <defs>
@@ -392,6 +396,12 @@ export default function Polls() {
                         />
                     </PieChart>
                 </ResponsiveContainer>
+                {winnerOption && (
+                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center text-center pointer-events-none">
+                      <Award size={32} className="text-primary-500 mb-1" />
+                      <span className="text-[10px] font-black uppercase text-primary-600">Majorité</span>
+                   </div>
+                )}
              </div>
              
              <div className="bg-gray-50 dark:bg-gray-900/50 p-6 rounded-3xl border border-gray-100 dark:border-gray-800">

@@ -21,7 +21,7 @@ interface SearchResult {
 
 export default function Layout() {
   const { user, logout, toggleTheme, isDarkMode, adminViewClass, setAdminViewClass } = useAuth();
-  const { notifications, unreadCount } = useNotification();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications } = useNotification();
   
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isSearchOpen, setSearchOpen] = useState(false);
@@ -38,10 +38,22 @@ export default function Layout() {
 
   const location = useLocation();
   const navigate = useNavigate();
+  const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSidebarOpen(false);
+    setNotifOpen(false);
   }, [location]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
       if (user?.role === 'ADMIN') {
@@ -212,11 +224,61 @@ export default function Layout() {
              </div>
           </div>
 
-          <div className="flex items-center gap-4">
-             <button onClick={() => setNotifOpen(!isNotifOpen)} className={`p-2.5 text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl relative transition-all active:scale-95`}>
+          <div className="flex items-center gap-4 relative" ref={notifRef}>
+             <button onClick={() => setNotifOpen(!isNotifOpen)} className={`p-2.5 text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl relative transition-all active:scale-95 ${isNotifOpen ? 'bg-gray-100 dark:bg-gray-800' : ''}`}>
                <Bell size={22} />
                {unreadCount > 0 && <span className="absolute top-2 right-2.5 w-3 h-3 bg-red-500 rounded-full ring-2 ring-white dark:ring-gray-900 animate-pulse"></span>}
              </button>
+
+             {/* NOTIFICATION DROPDOWN */}
+             {isNotifOpen && (
+               <div className="absolute top-full right-0 mt-2 w-80 sm:w-96 bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-gray-100 dark:border-gray-800 rounded-[2rem] shadow-2xl z-[100] animate-in slide-in-from-top-2 fade-in overflow-hidden">
+                  <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
+                     <h3 className="text-xs font-black uppercase tracking-widest text-gray-900 dark:text-white">Dernières Notifications</h3>
+                     <button onClick={() => markAllAsRead()} className="text-[10px] font-black text-primary-500 uppercase tracking-widest hover:underline">Tout marquer lu</button>
+                  </div>
+                  <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                    {notifications.length > 0 ? (
+                      <div className="divide-y divide-gray-50 dark:divide-gray-800">
+                        {notifications.map(notif => (
+                          <div key={notif.id} className={`p-5 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group relative ${!notif.isRead ? 'bg-primary-50/20 dark:bg-primary-900/10' : ''}`}>
+                             <div className="flex items-start gap-4">
+                                <div className={`p-2.5 rounded-xl flex-shrink-0 ${
+                                  notif.type === 'success' ? 'bg-green-50 text-green-500' :
+                                  notif.type === 'alert' ? 'bg-red-50 text-red-500' :
+                                  notif.type === 'warning' ? 'bg-orange-50 text-orange-500' : 'bg-primary-50 text-primary-500'
+                                }`}>
+                                   {notif.type === 'alert' ? <AlertTriangle size={18} /> : 
+                                    notif.type === 'warning' ? <Info size={18} /> : <Megaphone size={18} />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                   <p className="text-xs font-black text-gray-900 dark:text-white leading-tight">{notif.title}</p>
+                                   <p className="text-[11px] text-gray-500 mt-1 leading-relaxed italic">{notif.message}</p>
+                                   <p className="text-[9px] text-gray-400 mt-2 font-bold uppercase">{new Date(notif.timestamp).toLocaleTimeString()}</p>
+                                </div>
+                                {!notif.isRead && (
+                                   <button onClick={() => markAsRead(notif.id)} className="p-1.5 text-primary-400 hover:text-primary-600 transition-colors">
+                                      <Check size={16} />
+                                   </button>
+                                )}
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="py-12 text-center text-gray-400 italic">
+                         <Bell size={32} className="mx-auto mb-3 opacity-10" />
+                         <p className="text-[10px] font-black uppercase tracking-widest opacity-50">Aucune notification</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
+                    <button onClick={() => clearNotifications()} className="w-full py-2.5 text-[10px] font-black text-gray-400 hover:text-red-500 uppercase tracking-widest flex items-center justify-center gap-2 transition-colors">
+                       <Trash2 size={14} /> Effacer l'historique
+                    </button>
+                  </div>
+               </div>
+             )}
 
              <button onClick={toggleTheme} className="p-2.5 text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-all">
                {isDarkMode ? <Sun size={22} /> : <Moon size={22} />}
