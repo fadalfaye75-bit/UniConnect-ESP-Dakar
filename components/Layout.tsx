@@ -1,17 +1,14 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-/* Import routing components from react-router as required by the environment */
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Megaphone, Calendar, GraduationCap, Video, 
   BarChart2, Search, LogOut, Menu, X, Moon, Sun, 
-  ShieldCheck, UserCircle, Bell, Check, Trash2, Info, AlertTriangle, Settings, Loader2, ArrowRight, Bot
+  ShieldCheck, UserCircle, Bell, Check, Trash2, Info, AlertTriangle, Settings, Loader2, ArrowRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
 import { API } from '../services/api';
-import { AppNotification } from '../types';
-import GeminiChat from './GeminiChat';
 
 interface SearchResult {
   id: string;
@@ -24,7 +21,7 @@ interface SearchResult {
 
 export default function Layout() {
   const { user, logout, toggleTheme, isDarkMode, adminViewClass, setAdminViewClass } = useAuth();
-  const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications } = useNotification();
+  const { notifications, unreadCount } = useNotification();
   
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isSearchOpen, setSearchOpen] = useState(false);
@@ -39,8 +36,6 @@ export default function Layout() {
     polls: any[]
   } | null>(null);
 
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const notifRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -131,9 +126,9 @@ export default function Layout() {
     return items;
   }, [user?.role]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (window.confirm("Se déconnecter de la plateforme ?")) {
-      logout();
+      await logout();
       navigate('/login');
     }
   };
@@ -236,8 +231,6 @@ export default function Layout() {
           <NavLink to="/profile" className={({ isActive }) => `p-3 rounded-2xl ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-primary-900/40' : 'text-gray-400'}`}><UserCircle size={24} /></NavLink>
         </nav>
       </div>
-
-      <GeminiChat />
 
       {isSearchOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 sm:pt-24 px-4 bg-gray-950/70 backdrop-blur-md" onClick={() => setSearchOpen(false)}>

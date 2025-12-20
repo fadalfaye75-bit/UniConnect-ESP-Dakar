@@ -8,7 +8,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (email: string, pass: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   updateCurrentUser: (updates: Partial<User>) => Promise<void>;
   adminViewClass: string | null;
   setAdminViewClass: (classId: string | null) => void;
@@ -45,17 +45,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     initAuth();
 
-    // Listen for auth changes
+    // Listen for auth changes (native Supabase session management)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT') {
+      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
         setUser(null);
         setAdminViewClass(null);
-      } else if (session) {
+      } else if (session?.user) {
         const profile = await API.auth.getSession();
         setUser(profile);
-      } else if (event === 'USER_DELETED') {
-        setUser(null);
-        setAdminViewClass(null);
       }
     });
 
@@ -68,25 +65,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = async () => {
-    // 1. Déconnexion optimiste : on vide l'état immédiatement pour rediriger l'utilisateur sans attendre l'API
-    setUser(null);
-    setAdminViewClass(null);
-    
     try {
-      // 2. On tente de fermer la session proprement côté serveur
-      await API.auth.logout();
+      // 1. Déconnexion côté serveur via Supabase
+      await supabase.auth.signOut();
       
-      // 3. Nettoyage manuel exhaustif du localStorage pour éviter toute restauration de session parasite
+      // 2. Réinitialisation de l'état local
+      setUser(null);
+      setAdminViewClass(null);
+      
+      // 3. Nettoyage manuel du stockage local lié à Supabase pour forcer une session vierge
       const keys = Object.keys(localStorage);
       keys.forEach(key => {
-        if (key.includes('-auth-token') || key.includes('supabase.auth')) {
+        if (key.includes('supabase.auth.token') || key.includes('-auth-token')) {
           localStorage.removeItem(key);
         }
       });
     } catch (e) {
-      // Si l'API échoue (ex: déjà déconnecté ou pas de réseau), l'utilisateur est quand même redirigé
-      // car setUser(null) a déjà été appelé au début de la fonction.
-      console.warn("La session distante n'a pas pu être fermée proprement, mais l'accès local a été révoqué.", e);
+      console.warn("Logout process had issues, force clearing state.", e);
+      setUser(null);
     }
   };
 
@@ -109,7 +105,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return (
           <div id="app-loader">
               <div className="spinner"></div>
-              <p className="mt-4 text-sm font-medium text-gray-500">Connexion sécurisée...</p>
+              <p className="mt-4 text-sm font-medium text-gray-500">UniConnect ESP - Session sécurisée...</p>
           </div>
       );
   }

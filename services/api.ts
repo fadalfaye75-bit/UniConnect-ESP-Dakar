@@ -5,30 +5,6 @@ import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotific
 
 const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8&chars=2`;
 
-// Cache intelligent avec TTL
-const CACHE: Record<string, { data: any, timestamp: number, ttl: number }> = {};
-const DEFAULT_TTL = 30 * 1000; 
-
-const getCached = (key: string) => {
-    const entry = CACHE[key];
-    if (entry && Date.now() - entry.timestamp < entry.ttl) return entry.data;
-    return null;
-};
-
-const setCache = (key: string, data: any, ttl = DEFAULT_TTL) => {
-    CACHE[key] = { data, timestamp: Date.now(), ttl };
-};
-
-export const invalidateCache = (prefix?: string) => {
-    if (!prefix) {
-        Object.keys(CACHE).forEach(key => delete CACHE[key]);
-    } else {
-        Object.keys(CACHE).forEach(key => {
-            if (key.startsWith(prefix)) delete CACHE[key];
-        });
-    }
-};
-
 const mapProfileToUser = (p: any): User => ({
   id: p.id,
   name: p.full_name || 'Utilisateur',
@@ -69,7 +45,6 @@ export const API = {
       if (fetchError) throw fetchError;
       if (!profile) throw new Error("Profil non trouvé.");
       
-      invalidateCache();
       return mapProfileToUser(profile);
     },
 
@@ -97,10 +72,7 @@ export const API = {
       const dbUpdates: any = {};
       if (updates.name) {
         dbUpdates.full_name = updates.name;
-        // L'avatar suit automatiquement le nom si aucune URL d'avatar spécifique n'est fournie
-        if (!updates.avatar) {
-          dbUpdates.avatar_url = getInitialsAvatar(updates.name);
-        }
+        if (!updates.avatar) dbUpdates.avatar_url = getInitialsAvatar(updates.name);
       }
       if (updates.role) dbUpdates.role = updates.role.toLowerCase();
       if (updates.className !== undefined) dbUpdates.classname = updates.className;
@@ -109,7 +81,6 @@ export const API = {
       
       const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
       if (error) throw error;
-      invalidateCache(`profile_${id}`);
       return data ? mapProfileToUser(data) : null;
     },
 
@@ -132,7 +103,6 @@ export const API = {
     },
 
     logout: async () => { 
-        invalidateCache();
         await supabase.signOut(); 
     },
     
@@ -164,50 +134,35 @@ export const API = {
     subscribe: (callback: () => void) => {
       return supabase
         .channel('public:announcements')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
-          callback();
-        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, callback)
         .subscribe();
     },
     create: async (ann: any) => {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user?.id).single();
       const { data, error } = await supabase.from('announcements').insert({
-        title: ann.title, 
-        content: ann.content, 
-        priority: ann.priority,
-        classname: ann.className || 'Général', 
-        author_id: user?.id, 
-        author_name: profile?.full_name || 'Admin',
-        attachments: ann.attachments || []
+        title: ann.title, content: ann.content, priority: ann.priority,
+        classname: ann.className || 'Général', author_id: user?.id, author_name: profile?.full_name || 'Admin'
       }).select().single();
       if (error) throw error;
       return mapAnnouncement(data);
     },
-    update: async (id: string, ann: any) => {
-      const { data, error } = await supabase.from('announcements').update({
-        title: ann.title, content: ann.content, priority: ann.priority, attachments: ann.attachments || []
-      }).eq('id', id).select().single();
-      if (error) throw error;
-      return mapAnnouncement(data);
-    },
-    delete: async (id: string) => { 
-        await supabase.from('announcements').delete().eq('id', id);
-    }
+    delete: async (id: string) => { await supabase.from('announcements').delete().eq('id', id); }
   },
 
   polls: {
     list: async (): Promise<Poll[]> => {
       const { data: { user } } = await supabase.auth.getUser();
+      // On récupère les votes pré-calculés par le trigger SQL pour la scalabilité
       const { data: polls, error } = await supabase.from('polls')
-        .select('*, poll_options(*)')
+        .select('*, poll_options(id, label, votes)')
         .order('created_at', { ascending: false });
       
       if (error || !polls) return [];
       
       let userVotes: any[] = [];
       if (user) {
-        const { data } = await supabase.from('poll_votes').select('*').eq('user_id', user.id);
+        const { data } = await supabase.from('poll_votes').select('poll_id, option_id').eq('user_id', user.id);
         userVotes = data || [];
       }
 
@@ -217,8 +172,7 @@ export const API = {
         return {
           id: p.id, question: p.question, className: p.classname, isActive: p.is_active,
           options, totalVotes: options.reduce((acc: number, o: any) => acc + o.votes, 0),
-          hasVoted: !!userVote, userVoteOptionId: userVote?.option_id,
-          startTime: p.start_time, endTime: p.end_time
+          hasVoted: !!userVote, userVoteOptionId: userVote?.option_id
         };
       });
     },
@@ -226,7 +180,7 @@ export const API = {
       return supabase
         .channel('public:polls_sync')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, callback)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, callback)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_options' }, callback)
         .subscribe();
     },
     vote: async (pollId: string, optionId: string) => {
@@ -240,8 +194,7 @@ export const API = {
     create: async (p: any) => {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: poll, error: pollErr } = await supabase.from('polls').insert({
-          question: p.question, classname: p.className, is_active: true, creator_id: user?.id,
-          start_time: p.startTime, end_time: p.endTime
+          question: p.question, classname: p.className, is_active: true, creator_id: user?.id
       }).select().single();
       if (pollErr) throw pollErr;
       const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
@@ -252,12 +205,7 @@ export const API = {
       const { data: p } = await supabase.from('polls').select('is_active').eq('id', id).single();
       await supabase.from('polls').update({ is_active: !p?.is_active }).eq('id', id);
     },
-    delete: async (id: string) => {
-      await supabase.from('polls').delete().eq('id', id);
-    },
-    update: async (id: string, p: any) => {
-      await supabase.from('polls').update({ question: p.question, start_time: p.startTime, end_time: p.endTime }).eq('id', id);
-    }
+    delete: async (id: string) => { await supabase.from('polls').delete().eq('id', id); }
   },
 
   exams: {
@@ -276,13 +224,13 @@ export const API = {
       return { ...exam, id: data.id };
     },
     update: async (id: string, exam: any) => {
-      await supabase.from('exams').update({
+      const { data, error } = await supabase.from('exams').update({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
-      }).eq('id', id);
+      }).eq('id', id).select().single();
+      if (error) throw error;
+      return data;
     },
-    delete: async (id: string) => {
-      await supabase.from('exams').delete().eq('id', id);
-    }
+    delete: async (id: string) => { await supabase.from('exams').delete().eq('id', id); }
   },
 
   classes: {
@@ -291,15 +239,12 @@ export const API = {
       if (error) return [];
       return data.map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
     },
-    create: async (name: string, email: string) => {
-      await supabase.from('classes').insert({ name, email });
+    create: async (name: string, email: string) => { await supabase.from('classes').insert({ name, email }); },
+    update: async (id: string, updates: { name: string, email: string }) => {
+      const { error } = await supabase.from('classes').update({ name: updates.name, email: updates.email }).eq('id', id);
+      if (error) throw error;
     },
-    update: async (id: string, cls: { name: string, email: string }) => {
-      await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
-    },
-    delete: async (id: string) => {
-      await supabase.from('classes').delete().eq('id', id);
-    }
+    delete: async (id: string) => { await supabase.from('classes').delete().eq('id', id); }
   },
 
   notifications: {
@@ -312,7 +257,7 @@ export const API = {
         .order('created_at', { ascending: false })
         .limit(limit);
       return (data || []).map(n => ({ 
-        id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read, link: n.link 
+        id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read 
       }));
     },
     subscribe: (userId: string, callback: () => void) => {
@@ -321,10 +266,19 @@ export const API = {
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` }, callback)
         .subscribe();
     },
-    markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
     add: async (notif: any) => {
-       await supabase.from('notifications').insert(notif);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { error } = await supabase.from('notifications').insert({
+        title: notif.title,
+        message: notif.message,
+        type: notif.type,
+        user_id: user.id,
+        is_read: false
+      });
+      if (error) throw error;
     },
+    markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
     markAllRead: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('notifications').update({ is_read: true }).eq('user_id', user?.id);
@@ -349,11 +303,13 @@ export const API = {
       return data;
     },
     update: async (id: string, m: any) => {
-      await supabase.from('meet_links').update({ title: m.title, platform: m.platform, url: m.url, time: m.time }).eq('id', id);
+      const { data, error } = await supabase.from('meet_links').update({
+        title: m.title, platform: m.platform, url: m.url, time: m.time
+      }).eq('id', id).select().single();
+      if (error) throw error;
+      return data;
     },
-    delete: async (id: string) => { 
-        await supabase.from('meet_links').delete().eq('id', id);
-    }
+    delete: async (id: string) => { await supabase.from('meet_links').delete().eq('id', id); }
   },
 
   schedules: {
@@ -369,9 +325,7 @@ export const API = {
       if (error) throw error;
       return data;
     },
-    delete: async (id: string) => { 
-        await supabase.from('schedules').delete().eq('id', id);
-    }
+    delete: async (id: string) => { await supabase.from('schedules').delete().eq('id', id); }
   },
 
   logs: {
@@ -381,9 +335,6 @@ export const API = {
         .order('created_at', { ascending: false })
         .range(page * limit, (page + 1) * limit - 1);
       return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
-    },
-    add: async (actor: string, action: string, target: string, type: string) => {
-      await supabase.from('activity_logs').insert({ actor, action, target, type });
     }
   }
 };

@@ -4,8 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { API } from '../services/api';
 import { Announcement, Exam, UserRole, Poll, MeetLink } from '../types';
 import { Clock, FileText, GraduationCap, Loader2, ChevronRight, BarChart2, Calendar, Video, Settings, ArrowRight, User as UserIcon, Sparkles, Megaphone, Radio } from 'lucide-react';
-/* Import routing components from react-router to ensure compatibility */
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
   const { user, adminViewClass } = useAuth();

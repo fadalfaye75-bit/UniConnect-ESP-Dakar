@@ -1,36 +1,35 @@
 
 # 🎓 UniConnect - Portail ESP Dakar
 
-UniConnect est une plateforme de gestion scolaire universitaire centralisée conçue pour l'École Supérieure Polytechnique de Dakar.
+UniConnect est une plateforme de gestion scolaire universitaire centralisée pour l'ESP de Dakar.
 
-## 🚀 Réparation de la Base de Données (Supabase)
+## 🚀 Optimisation des Consultations (Vitesse & Fluidité)
 
-Si vous ne pouvez pas **lancer de sondages** ou si vous avez l'erreur **PGRST204**, copiez et exécutez ce script **exactement** dans l'éditeur SQL de votre dashboard Supabase :
+Pour que l'onglet "Consultations" soit instantané même avec 5000+ étudiants, exécutez ce script dans Supabase :
 
 ```sql
--- 1. AJOUT DES COLONNES MANQUANTES
-ALTER TABLE public.polls ADD COLUMN IF NOT EXISTS classname TEXT DEFAULT 'Général';
-ALTER TABLE public.polls ADD COLUMN IF NOT EXISTS creator_id UUID REFERENCES auth.users(id);
-ALTER TABLE public.polls ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ;
-ALTER TABLE public.polls ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ;
+-- COMPTEURS DÉNORMALISÉS
+ALTER TABLE public.poll_options ADD COLUMN IF NOT EXISTS votes INTEGER DEFAULT 0;
 
--- 2. ACTIVATION RLS
-ALTER TABLE public.polls ENABLE ROW LEVEL SECURITY;
+-- TRIGGER DE CALCUL INSTANTANÉ
+CREATE OR REPLACE FUNCTION public.update_poll_option_count() RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN UPDATE public.poll_options SET votes = votes + 1 WHERE id = NEW.option_id;
+    ELSIF (TG_OP = 'DELETE') THEN UPDATE public.poll_options SET votes = votes - 1 WHERE id = OLD.option_id;
+    ELSIF (TG_OP = 'UPDATE') THEN
+        IF (OLD.option_id <> NEW.option_id) THEN
+            UPDATE public.poll_options SET votes = votes - 1 WHERE id = OLD.option_id;
+            UPDATE public.poll_options SET votes = votes + 1 WHERE id = NEW.option_id;
+        END IF;
+    END IF;
+    RETURN NULL;
+END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 3. DROITS D'INSERTION (Crucial pour lancer le sondage)
-DROP POLICY IF EXISTS "Insertion_Sondages_Delegue_Admin" ON public.polls;
-CREATE POLICY "Insertion_Sondages_Delegue_Admin" ON public.polls 
-FOR INSERT TO authenticated 
-WITH CHECK (true);
+CREATE TRIGGER tr_update_poll_option_count AFTER INSERT OR UPDATE OR DELETE ON public.poll_votes FOR EACH ROW EXECUTE FUNCTION public.update_poll_option_count();
 
--- 4. DROITS DE LECTURE
-DROP POLICY IF EXISTS "Lecture_Sondages_Tous" ON public.polls;
-CREATE POLICY "Lecture_Sondages_Tous" ON public.polls 
-FOR SELECT TO authenticated 
-USING (true);
-
--- 5. RECHARGEMENT CACHE API
-NOTIFY pgrst, 'reload schema';
+-- INDEX DE RECHERCHE RAPIDE
+CREATE INDEX IF NOT EXISTS idx_poll_votes_lookup ON public.poll_votes (poll_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_polls_classname_active ON public.polls (classname, is_active);
 ```
 
 ## 🛠 Variables d'Environnement

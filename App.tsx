@@ -1,10 +1,8 @@
 
 import React, { lazy, Suspense, useEffect } from 'react';
-/* Unified routing imports from react-router to satisfy environment constraints */
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
-import { ChatProvider } from './context/ChatContext';
 import { Loader2 } from 'lucide-react';
 
 // Lazy loaded pages
@@ -72,11 +70,9 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificationProvider>
-        <ChatProvider>
-          <HashRouter>
-            <AppRoutes />
-          </HashRouter>
-        </ChatProvider>
+        <HashRouter>
+          <AppRoutes />
+        </HashRouter>
       </NotificationProvider>
     </AuthProvider>
   );
