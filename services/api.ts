@@ -7,8 +7,8 @@ const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initia
 
 // Cache avec TTL différencié
 const CACHE: Record<string, { data: any, timestamp: number, ttl: number }> = {};
-const DEFAULT_TTL = 30 * 1000; // 30 secondes par défaut
-const LONG_TTL = 10 * 60 * 1000; // 10 minutes pour les données quasi-statiques (classes)
+const DEFAULT_TTL = 30 * 1000; 
+const LONG_TTL = 10 * 60 * 1000; 
 
 const getCached = (key: string) => {
     const entry = CACHE[key];
@@ -265,21 +265,17 @@ export const API = {
           end_time: p.endTime || null,
           creator_id: authUser.id
         })
-        .select();
+        .select('id, question, classname');
       
       if (pollErr) {
-        // Log simple pour faciliter le debug
-        console.error("DB Error Code:", pollErr.code);
-        console.error("DB Error Msg:", pollErr.message);
-
-        if (pollErr.code === '42703' || pollErr.message?.includes('creator_id')) {
-           throw new Error("Erreur de schéma : La colonne 'creator_id' n'est pas reconnue. Veuillez exécuter le script SQL 'Ultimate Fix' dans le README.md et attendre 1 minute.");
+        if (pollErr.code === 'PGRST204' || pollErr.message?.includes('column')) {
+           throw new Error("⚠️ Erreur de cache API : Allez dans Supabase SQL Editor et lancez 'NOTIFY pgrst, reload schema' pour que les nouvelles colonnes soient reconnues.");
         }
-        throw new Error(pollErr.message || "Erreur de base de données lors de la création.");
+        throw new Error("Erreur base de données: " + (pollErr.message || pollErr.code));
       }
 
       if (!poll || poll.length === 0) {
-        throw new Error("Le sondage a été créé mais n'a pas pu être récupéré. Vérifiez que vous avez exécuté la partie 'RLS' du script SQL dans le README.");
+        throw new Error("Création réussie mais lecture impossible. Vérifiez les politiques RLS dans Supabase.");
       }
 
       const newPollId = poll[0].id;
@@ -288,7 +284,7 @@ export const API = {
       
       if (optErr) {
           await supabase.from('polls').delete().eq('id', newPollId);
-          throw new Error("Erreur lors de la création des options: " + optErr.message);
+          throw new Error("Erreur options: " + optErr.message);
       }
 
       invalidateCache('polls_list');
@@ -354,7 +350,7 @@ export const API = {
       const { data, error } = await supabase.from('classes').select('id, name, email').order('name');
       if (error) return [];
       const classes = (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
-      setCache('classes_list', classes, LONG_TTL); // Cache long car peu de changements
+      setCache('classes_list', classes, LONG_TTL); 
       return classes;
     },
     create: async (name: string, email: string) => {

@@ -182,8 +182,13 @@ export default function Layout() {
             className={({isActive}) => `flex items-center gap-3 mb-8 p-3 rounded-xl transition-all group border ${isActive ? 'bg-primary-50/50 border-primary-100 dark:bg-primary-900/10 dark:border-primary-800/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50 border-transparent hover:border-gray-100 dark:hover:border-gray-600'}`}
           >
              <div className="relative flex-shrink-0">
-                <img src={user?.avatar} alt="Profile" loading="lazy" className="w-12 h-12 rounded-full object-cover border-[3px] border-primary-500 dark:border-primary-400 shadow-lg ring-2 ring-white dark:ring-gray-800 transition-all group-hover:scale-105" />
-                <div className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full shadow-sm"></div>
+                <img 
+                  src={user?.avatar} 
+                  alt="Profile" 
+                  loading="lazy" 
+                  className="w-14 h-14 rounded-full object-cover border-[4px] border-primary-500 dark:border-primary-400 shadow-xl shadow-primary-500/20 ring-2 ring-white dark:ring-gray-900 transition-all group-hover:scale-105 group-hover:rotate-2" 
+                />
+                <div className="absolute bottom-1 right-0.5 w-4 h-4 bg-green-500 border-[3px] border-white dark:border-gray-900 rounded-full shadow-md"></div>
              </div>
              <div className="flex-1 min-w-0">
                <p className="text-sm font-bold truncate text-gray-800 dark:text-white">{user?.name}</p>
