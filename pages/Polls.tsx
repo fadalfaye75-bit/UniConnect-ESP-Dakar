@@ -148,12 +148,13 @@ export default function Polls() {
       }
   };
 
+  // Palette de couleurs avec dégradés (paires de couleurs)
   const COLOR_PALETTE = [
-    { base: '#0ea5e9', light: '#38bdf8' },
-    { base: '#10b981', light: '#34d399' },
-    { base: '#f59e0b', light: '#fbbf24' },
-    { base: '#ef4444', light: '#f87171' },
-    { base: '#8b5cf6', light: '#a78bfa' },
+    { start: '#0ea5e9', end: '#38bdf8' }, // Bleu
+    { start: '#10b981', end: '#34d399' }, // Émeraude
+    { start: '#f59e0b', end: '#fbbf24' }, // Ambre
+    { start: '#f43f5e', end: '#fb7185' }, // Rose/Rouge
+    { start: '#8b5cf6', end: '#a78bfa' }, // Violet
   ];
 
   if (loading) return (
@@ -334,21 +335,82 @@ export default function Polls() {
         </form>
       </Modal>
 
-      <Modal isOpen={isResultsModalOpen} onClose={() => setIsResultsModalOpen(false)} title="Résultats">
+      <Modal isOpen={isResultsModalOpen} onClose={() => setIsResultsModalOpen(false)} title="Analyse des résultats">
         {selectedPollForResults && (
           <div className="space-y-8">
-             <div className="h-[280px] w-full">
+             <div className="h-[320px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                        <Pie data={selectedPollForResults.options} cx="50%" cy="50%" innerRadius={70} outerRadius={95} paddingAngle={8} dataKey="votes" nameKey="label" stroke="none">
+                        <defs>
+                          {COLOR_PALETTE.map((color, index) => (
+                            <linearGradient key={`grad-${index}`} id={`grad-${index}`} x1="0" y1="0" x2="1" y2="1">
+                              <stop offset="0%" stopColor={color.start} stopOpacity={1} />
+                              <stop offset="100%" stopColor={color.end} stopOpacity={1} />
+                            </linearGradient>
+                          ))}
+                        </defs>
+                        <Pie 
+                          data={selectedPollForResults.options} 
+                          cx="50%" cy="50%" 
+                          innerRadius={70} outerRadius={100} 
+                          paddingAngle={8} 
+                          dataKey="votes" nameKey="label" 
+                          stroke="none"
+                          animationBegin={0}
+                          animationDuration={1500}
+                        >
                             {selectedPollForResults.options.map((_, index) => (
-                              <Cell key={`cell-${index}`} fill={COLOR_PALETTE[index % COLOR_PALETTE.length].base} />
+                              <Cell 
+                                key={`cell-${index}`} 
+                                fill={`url(#grad-${index % COLOR_PALETTE.length})`} 
+                                className="outline-none"
+                              />
                             ))}
                         </Pie>
-                        <Tooltip />
-                        <Legend />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)', 
+                            backdropFilter: 'blur(8px)',
+                            border: 'none', 
+                            borderRadius: '1rem', 
+                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                            fontSize: '12px',
+                            fontWeight: '800'
+                          }}
+                          itemStyle={{ color: '#111827' }}
+                        />
+                        <Legend 
+                          verticalAlign="bottom" 
+                          iconType="circle"
+                          wrapperStyle={{ 
+                            paddingTop: '20px', 
+                            fontSize: '10px', 
+                            fontWeight: '900', 
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.1em'
+                          }} 
+                        />
                     </PieChart>
                 </ResponsiveContainer>
+             </div>
+             
+             <div className="bg-gray-50 dark:bg-gray-900/50 p-6 rounded-3xl border border-gray-100 dark:border-gray-800">
+                <div className="flex items-center gap-3 text-primary-500 mb-4">
+                   <TrendingUp size={20} />
+                   <h4 className="text-xs font-black uppercase tracking-widest">Résumé des participations</h4>
+                </div>
+                <div className="flex justify-between items-end">
+                   <div>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total des voix</p>
+                      <p className="text-3xl font-black text-gray-900 dark:text-white leading-none mt-1">{selectedPollForResults.totalVotes}</p>
+                   </div>
+                   <div className="text-right">
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Statut</p>
+                      <p className={`text-xs font-black uppercase mt-1 ${selectedPollForResults.isActive ? 'text-green-500' : 'text-gray-500'}`}>
+                         {selectedPollForResults.isActive ? 'En cours' : 'Clôturé'}
+                      </p>
+                   </div>
+                </div>
              </div>
           </div>
         )}

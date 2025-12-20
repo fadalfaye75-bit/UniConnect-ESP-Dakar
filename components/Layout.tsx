@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
@@ -154,15 +155,19 @@ export default function Layout() {
         <div className="px-4 py-2 flex-1 overflow-y-auto custom-scrollbar">
           <NavLink 
             to="/profile" 
-            className={({ isActive }) => `flex items-center gap-3 mb-8 p-3 rounded-xl transition-all group border ${isActive ? 'bg-primary-50/80 border-primary-100 dark:bg-primary-900/20 dark:border-primary-800/30' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border-transparent'}`}
+            className={({ isActive }) => `flex items-center gap-4 mb-10 p-4 rounded-2xl transition-all group border ${isActive ? 'bg-primary-50/80 border-primary-100 dark:bg-primary-900/20 dark:border-primary-800/30' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border-transparent'}`}
           >
              <div className="relative flex-shrink-0">
-                <img src={user?.avatar} alt="Profile" className="w-14 h-14 rounded-full object-cover border-[4px] border-primary-500 dark:border-primary-400 shadow-xl shadow-primary-500/20 ring-2 ring-white dark:ring-gray-900 transition-all group-hover:scale-110" />
-                <div className="absolute bottom-1 right-0.5 w-4 h-4 bg-green-500 border-[3px] border-white dark:border-gray-900 rounded-full shadow-md"></div>
+                <img 
+                  src={user?.avatar} 
+                  alt="Profile" 
+                  className="w-16 h-16 rounded-full object-cover border-[6px] border-primary-500 dark:border-primary-400 shadow-2xl shadow-primary-500/30 ring-4 ring-white dark:ring-gray-900 transition-all group-hover:scale-110 group-hover:rotate-3" 
+                />
+                <div className="absolute bottom-1 right-0 w-4 h-4 bg-green-500 border-[3px] border-white dark:border-gray-900 rounded-full shadow-md"></div>
              </div>
              <div className="flex-1 min-w-0">
-               <p className="text-sm font-black truncate text-gray-900 dark:text-white">{user?.name.split(' ')[0]}</p>
-               <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate font-black uppercase tracking-widest">{user?.role === 'ADMIN' ? 'Admin' : user?.className}</p>
+               <p className="text-sm font-black truncate text-gray-900 dark:text-white leading-tight">{user?.name.split(' ')[0]}</p>
+               <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate font-black uppercase tracking-widest mt-0.5">{user?.role === 'ADMIN' ? 'Admin' : user?.className}</p>
              </div>
           </NavLink>
 
