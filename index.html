@@ -4,10 +4,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>UniConnect - Portail Universitaire</title>
+    <title>UniConnect - Portail ESP Dakar</title>
+    <meta name="description" content="Plateforme centralisée pour l'administration, les délégués et les étudiants de l'ESP Dakar.">
+    
+    <!-- Open Graph / Facebook / WhatsApp -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="UniConnect - ESP Dakar">
+    <meta property="og:description" content="Gérez votre scolarité, vos examens et participez aux consultations étudiantes en un seul endroit.">
+    <meta property="og:image" content="https://jjnujjwgtpjhbuqvpnly.supabase.co/storage/v1/object/public/assets/og-image.png">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -18,13 +26,13 @@
             fontFamily: { sans: ['Inter', 'sans-serif'] },
             colors: {
               primary: {
-                50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#87CEEB',
+                50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc',
                 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1',
                 800: '#075985', 900: '#0c4a6e',
               }
             },
             boxShadow: {
-              'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+              'soft': '0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05)',
             }
           }
         }
@@ -73,11 +81,21 @@
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
       .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
 
-      .animate-fade-in { animation: fadeIn 0.3s ease-out; }
-      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      .animate-fade-in { animation: fadeIn 0.4s ease-out; }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+      /* Effet Glassmorphism */
+      .glass {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .dark .glass {
+        background: rgba(31, 41, 55, 0.7);
+      }
     </style>
   </head>
-  <body class="bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200 font-sans antialiased">
+  <body class="bg-gray-50 text-gray-800 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200 font-sans antialiased">
     <div id="root"></div>
     <script type="module" src="./index.tsx"></script>
   </body>
