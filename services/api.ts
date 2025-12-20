@@ -52,6 +52,7 @@ const mapAnnouncement = (a: any): Announcement => {
     className: a.classname || 'Général',
     priority: priority as any,
     isImportant: priority === 'important' || priority === 'urgent',
+    attachments: a.attachments || [],
     links: [] 
   };
 };
@@ -164,7 +165,7 @@ export const API = {
       if (cached) return cached;
 
       const { data, error } = await supabase.from('announcements')
-        .select('id, title, content, author_name, created_at, classname, priority')
+        .select('*')
         .order('created_at', { ascending: false })
         .limit(limit);
       
@@ -176,8 +177,13 @@ export const API = {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user?.id).single();
       const { data, error } = await supabase.from('announcements').insert({
-        title: ann.title, content: ann.content, priority: ann.priority,
-        classname: ann.className || 'Général', author_id: user?.id, author_name: profile?.full_name || 'Admin'
+        title: ann.title, 
+        content: ann.content, 
+        priority: ann.priority,
+        classname: ann.className || 'Général', 
+        author_id: user?.id, 
+        author_name: profile?.full_name || 'Admin',
+        attachments: ann.attachments || []
       }).select().single();
       if (error) throw error;
       invalidateCache('announcements_');
@@ -185,8 +191,11 @@ export const API = {
     },
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
-        title: ann.title, content: ann.content, priority: ann.priority,
-        classname: ann.className
+        title: ann.title, 
+        content: ann.content, 
+        priority: ann.priority,
+        classname: ann.className,
+        attachments: ann.attachments || []
       }).eq('id', id).select().single();
       if (error) throw error;
       invalidateCache('announcements_');
@@ -231,7 +240,16 @@ export const API = {
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
+      // Appel de la fonction SQL RPC pour garantir l'intégrité
+      const { error } = await supabase.rpc('vote_for_option', {
+        p_poll_id: pollId,
+        p_option_id: optionId,
+        p_user_id: user.id
+      });
+      if (error) {
+          // Fallback si la fonction RPC n'est pas encore créée
+          await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
+      }
       invalidateCache('polls_list');
     },
     create: async (p: any) => {

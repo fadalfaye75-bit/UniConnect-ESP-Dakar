@@ -5,7 +5,7 @@ import { API } from '../services/api';
 import { 
   Plus, Share2, Copy, Trash2, Loader2, Pencil, 
   Megaphone, AlertTriangle, Info, Pin, 
-  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle
+  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle, FileText, Download
 } from 'lucide-react';
 import { UserRole, Announcement, AnnouncementPriority, ExternalLink as LinkType } from '../types';
 import Modal from '../components/Modal';
@@ -58,7 +58,7 @@ export default function Announcements() {
     title: '', 
     content: '', 
     priority: 'normal' as AnnouncementPriority,
-    links: [] as LinkType[]
+    attachments: [] as string[]
   });
 
   const canManage = user?.role === UserRole.ADMIN || user?.role === UserRole.DELEGATE;
@@ -123,7 +123,7 @@ export default function Announcements() {
 
   const openNewModal = () => {
     setEditingId(null);
-    setFormData({ title: '', content: '', priority: 'normal', links: [] });
+    setFormData({ title: '', content: '', priority: 'normal', attachments: [] });
     setIsModalOpen(true);
   };
 
@@ -134,9 +134,22 @@ export default function Announcements() {
         title: ann.title, 
         content: ann.content, 
         priority: ann.priority,
-        links: ann.links || [] 
+        attachments: ann.attachments || [] 
     });
     setIsModalOpen(true);
+  };
+
+  const handleAddAttachment = () => {
+    const url = window.prompt("Lien vers la pièce jointe (PDF, Image, etc.) :");
+    if (url && url.startsWith('http')) {
+        setFormData(prev => ({...prev, attachments: [...prev.attachments, url]}));
+    } else if (url) {
+        alert("Lien invalide. Doit commencer par http.");
+    }
+  };
+
+  const handleRemoveAttachment = (idx: number) => {
+      setFormData(prev => ({...prev, attachments: prev.attachments.filter((_, i) => i !== idx)}));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -150,7 +163,8 @@ export default function Announcements() {
           title: formData.title,
           content: formData.content,
           priority: formData.priority,
-          className: targetClass
+          className: targetClass,
+          attachments: formData.attachments
       };
 
       if (editingId) {
@@ -239,9 +253,31 @@ export default function Announcements() {
                 <h3 className="text-lg font-bold mb-2 flex items-center gap-2">
                    {ann.title}
                 </h3>
-                <div className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">
+                <div className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap mb-4">
                     {formatContent(ann.content)}
                 </div>
+                
+                {ann.attachments && ann.attachments.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Pièces jointes</p>
+                    <div className="flex flex-wrap gap-2">
+                      {ann.attachments.map((url, idx) => (
+                        <a 
+                          key={idx} 
+                          href={url} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 rounded-lg text-xs font-medium hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border border-gray-100 dark:border-gray-600"
+                        >
+                          <FileText size={14} className="text-primary-500" />
+                          <span className="truncate max-w-[150px]">Fichier {idx + 1}</span>
+                          <Download size={12} className="text-gray-400" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })
@@ -268,6 +304,26 @@ export default function Announcements() {
             onChange={e => setFormData({...formData, content: e.target.value})}
             className="w-full px-4 py-3 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500"
           />
+          
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Pièces jointes</label>
+              <button type="button" onClick={handleAddAttachment} className="text-xs text-primary-600 font-bold hover:underline flex items-center gap-1">
+                <Plus size={14} /> Ajouter un lien
+              </button>
+            </div>
+            <div className="space-y-1">
+              {formData.attachments.map((url, idx) => (
+                <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600">
+                  <span className="text-xs truncate max-w-[200px]">{url}</span>
+                  <button type="button" onClick={() => handleRemoveAttachment(idx)} className="text-red-500 p-1">
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <button type="submit" disabled={submitting} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3 rounded-xl transition-opacity disabled:opacity-50">
              {submitting ? 'Envoi...' : 'Publier'}
           </button>
