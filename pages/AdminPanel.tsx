@@ -141,23 +141,25 @@ export default function AdminPanel() {
   };
 
   const handleToggleStatus = async (userId: string) => {
+      if(!window.confirm("Changer le statut d'accès de cet utilisateur ? S'il est désactivé, il ne pourra plus se connecter à la plateforme.")) return;
+      
       try {
           await API.auth.toggleUserStatus(userId);
           fetchGlobalData();
-          addNotification({ title: 'Succès', message: 'Statut mis à jour.', type: 'info' });
+          addNotification({ title: 'Statut mis à jour', message: 'L\'accès a été modifié avec succès.', type: 'info' });
       } catch(e: any) { 
-        addNotification({ title: 'Erreur', message: e?.message || "Échec.", type: 'alert' }); 
+        addNotification({ title: 'Erreur', message: e?.message || "Échec de l'opération.", type: 'alert' }); 
       }
   };
 
   const handleDeleteUser = async (userId: string) => {
-      if(!window.confirm("Supprimer définitivement cet utilisateur ?")) return;
+      if(!window.confirm("Êtes-vous sûr de vouloir supprimer définitivement cet utilisateur ? Cette action supprimera également son profil et ses données associées.")) return;
       try {
           await API.auth.deleteUser(userId);
           fetchGlobalData();
-          addNotification({ title: 'Succès', message: 'Utilisateur supprimé.', type: 'info' });
+          addNotification({ title: 'Utilisateur supprimé', message: 'Le compte a été retiré de la base.', type: 'info' });
       } catch(e: any) { 
-        addNotification({ title: 'Erreur', message: e?.message || "Échec.", type: 'alert' }); 
+        addNotification({ title: 'Erreur', message: e?.message || "Échec de la suppression.", type: 'alert' }); 
       }
   };
 
@@ -184,18 +186,18 @@ export default function AdminPanel() {
           }
           await fetchGlobalData();
           setIsClassModalOpen(false);
-          addNotification({ title: 'Succès', message: 'Classe enregistrée.', type: 'success' });
+          addNotification({ title: 'Succès', message: 'La classe a été enregistrée.', type: 'success' });
       } catch (error: any) {
           addNotification({ title: 'Erreur', message: error?.message || 'Opération échouée.', type: 'alert' });
       } finally { setSubmitting(false); }
   };
 
   const handleDeleteClass = async (id: string, name: string) => {
-    if (!window.confirm(`Voulez-vous vraiment supprimer la classe "${name}" ? Cette action peut impacter l'accès des étudiants associés.`)) return;
+    if (!window.confirm(`Voulez-vous vraiment supprimer définitivement la classe "${name}" ? Cette action est irréversible et peut impacter l'accès des étudiants associés.`)) return;
     try {
         await API.classes.delete(id);
         await fetchGlobalData();
-        addNotification({ title: 'Succès', message: 'Classe supprimée avec succès.', type: 'info' });
+        addNotification({ title: 'Classe supprimée', message: 'La classe a été retirée avec succès.', type: 'info' });
     } catch (error: any) {
         addNotification({ title: 'Erreur', message: error?.message || "Impossible de supprimer la classe.", type: 'alert' });
     }

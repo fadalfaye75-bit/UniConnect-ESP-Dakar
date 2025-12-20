@@ -99,6 +99,19 @@ export default function Announcements() {
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm("Êtes-vous sûr de vouloir supprimer définitivement cette annonce ? Cette action est irréversible et l'avis disparaîtra du mur pour tous les utilisateurs.")) return;
+    
+    try {
+      await API.announcements.delete(id);
+      addNotification({ title: 'Annonce supprimée', message: 'Le message a été retiré avec succès.', type: 'info' });
+      fetchAnnouncements(0, true);
+    } catch (error) {
+      addNotification({ title: 'Erreur', message: 'Une erreur est survenue lors de la suppression.', type: 'alert' });
+    }
+  };
+
   const displayedAnnouncements = useMemo(() => {
     return announcements.filter(ann => {
       const targetClass = ann.className || 'Général';
@@ -242,6 +255,8 @@ export default function Announcements() {
       <div className={`grid gap-6 transition-all duration-500 ${isFiltering ? 'opacity-40 translate-y-2' : 'opacity-100'}`}>
         {displayedAnnouncements.map((ann, index) => {
           const isUnread = user?.role === UserRole.STUDENT && !readIds.includes(ann.id);
+          const canDelete = user?.role === UserRole.ADMIN || (user?.role === UserRole.DELEGATE && ann.className === user.className);
+          
           return (
             <div 
               key={ann.id} 
@@ -271,7 +286,18 @@ export default function Announcements() {
                   <span className="text-[8px] font-black uppercase px-2.5 py-1 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-800 text-gray-400 tracking-widest">
                     {ann.className || 'Général'}
                   </span>
-                  <span className="text-[8px] font-black uppercase text-gray-300 ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">Posté par {ann.author}</span>
+                  <div className="ml-auto flex items-center gap-3">
+                     <span className="text-[8px] font-black uppercase text-gray-300 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">Posté par {ann.author}</span>
+                     {canDelete && (
+                       <button 
+                         onClick={(e) => handleDelete(e, ann.id)}
+                         className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                         title="Supprimer l'annonce"
+                       >
+                         <Trash2 size={16} />
+                       </button>
+                     )}
+                  </div>
                 </div>
                 <h3 className="text-2xl font-black text-gray-900 dark:text-white mb-4 tracking-tighter italic leading-tight group-hover:text-primary-600 transition-colors">
                   {ann.title}
