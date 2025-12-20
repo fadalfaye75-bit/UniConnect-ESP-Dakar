@@ -1,22 +1,10 @@
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API } from '../services/api';
 import { Announcement, Exam, UserRole } from '../types';
 import { Clock, FileText, GraduationCap, Loader2, ChevronRight, BarChart2, Calendar, Video, Settings, ArrowRight, User } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-
-const getAnnouncementImage = (id: string) => {
-  const images = [
-    'https://images.unsplash.com/photo-1523050335392-9bef867a0578?auto=format&fit=crop&q=60&w=400',
-    'https://images.unsplash.com/photo-1541339907198-e08756ebafe3?auto=format&fit=crop&q=60&w=400',
-    'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=60&w=400',
-    'https://images.unsplash.com/photo-1498243639359-2cee506b74ad?auto=format&fit=crop&q=60&w=400',
-    'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=60&w=400'
-  ];
-  const index = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % images.length;
-  return images[index];
-};
 
 export default function Dashboard() {
   const { user, adminViewClass } = useAuth();
@@ -150,39 +138,26 @@ export default function Dashboard() {
                 <div 
                   key={ann.id} 
                   onClick={() => navigate('/announcements')} 
-                  className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 hover:shadow-xl hover:border-primary-300 transition-all cursor-pointer group flex flex-col overflow-hidden"
+                  className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 hover:shadow-lg hover:border-primary-300 transition-all cursor-pointer group flex flex-col overflow-hidden p-6"
                 >
-                  <div className="relative h-40 overflow-hidden bg-gray-200 dark:bg-gray-700">
-                    <img 
-                      src={getAnnouncementImage(ann.id)} 
-                      alt={ann.title}
-                      loading="lazy"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-                    <div className="absolute top-3 left-3">
-                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-md text-white shadow-sm border ${
-                        ann.priority === 'urgent' ? 'bg-red-500 border-red-400' : 
-                        ann.priority === 'important' ? 'bg-orange-500 border-orange-400' : 
-                        'bg-primary-500 border-primary-400'
-                      }`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-md border ${
+                        ann.priority === 'urgent' ? 'bg-red-50 text-red-600 border-red-100 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : 
+                        ann.priority === 'important' ? 'bg-orange-50 text-orange-600 border-orange-100 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800' : 
+                        'bg-primary-50 text-primary-600 border-primary-100 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'
+                    }`}>
                         {ann.priority}
-                      </span>
-                    </div>
-                    <div className="absolute bottom-3 left-3 flex items-center gap-2 text-white">
-                       <div className="w-6 h-6 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30">
-                          <User size={12} />
-                       </div>
-                       <span className="text-[10px] font-bold opacity-90">{ann.author}</span>
+                    </span>
+                    <div className="flex items-center gap-2 text-gray-400">
+                        <User size={12} />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">{ann.author.split(' ')[0]}</span>
                     </div>
                   </div>
                   
-                  <div className="p-5 flex-1 flex flex-col">
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-bold text-gray-900 dark:text-white group-hover:text-primary-600 transition-colors line-clamp-1 leading-tight">{ann.title}</h4>
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed mb-4 flex-1">{ann.content}</p>
-                    <div className="flex items-center justify-between mt-auto">
+                  <div className="flex-1 flex flex-col">
+                    <h4 className="font-bold text-gray-900 dark:text-white group-hover:text-primary-600 transition-colors line-clamp-1 leading-tight mb-2">{ann.title}</h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-3 leading-relaxed mb-4 flex-1">{ann.content}</p>
+                    <div className="flex items-center justify-between mt-auto border-t border-gray-50 dark:border-gray-700 pt-4">
                         <span className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-1">
                           <Clock size={12} /> {new Date(ann.date).toLocaleDateString()}
                         </span>
