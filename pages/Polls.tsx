@@ -193,8 +193,17 @@ export default function Polls() {
       setEditingId(null);
     } catch (error: any) {
       console.error("Poll Submission Error:", error);
-      // Extraction du message pour éviter [object Object]
-      const errorMsg = error instanceof Error ? error.message : (error?.message || "Erreur de base de données (Vérifiez votre script SQL).");
+      
+      // Extraction sécurisée du message d'erreur pour éviter [object Object]
+      let errorMsg = "Une erreur inconnue est survenue.";
+      if (typeof error === 'string') {
+        errorMsg = error;
+      } else if (error instanceof Error) {
+        errorMsg = error.message;
+      } else if (error && typeof error === 'object') {
+        errorMsg = error.message || error.error_description || JSON.stringify(error);
+      }
+
       addNotification({ title: 'Erreur', message: errorMsg, type: 'alert' });
     } finally {
       setSubmitting(false);

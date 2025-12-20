@@ -240,61 +240,59 @@ export const API = {
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      // Appel de la fonction SQL RPC pour garantir l'intégrité
       const { error } = await supabase.rpc('vote_for_option', {
         p_poll_id: pollId,
         p_option_id: optionId,
         p_user_id: user.id
       });
       if (error) {
-          // Fallback si la fonction RPC n'est pas encore créée
           await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
       }
       invalidateCache('polls_list');
     },
     create: async (p: any) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Veuillez vous reconnecter.");
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) throw new Error("Veuillez vous reconnecter.");
 
-      // On insère d'abord le sondage
-      const { data: poll, error: pollErr } = await supabase.from('polls').insert({
-        question: p.question, 
-        classname: p.className || 'Général', 
-        is_active: true, 
-        start_time: p.startTime, 
-        end_time: p.endTime,
-        creator_id: user.id
-      }).select(); // On retire .single() pour éviter l'erreur si RLS bloque la lecture immédiate
+      // Insertion du sondage
+      const { data: poll, error: pollErr } = await supabase
+        .from('polls')
+        .insert({
+          question: p.question, 
+          classname: p.className || 'Général', 
+          is_active: true, 
+          start_time: p.startTime || null, 
+          end_time: p.endTime || null,
+          creator_id: authUser.id
+        })
+        .select();
       
       if (pollErr) {
-        console.error("Supabase Poll Error:", pollErr);
-        throw new Error(pollErr.message || "Erreur lors de la création du sondage.");
+        // Log simple pour faciliter le debug
+        console.error("DB Error Code:", pollErr.code);
+        console.error("DB Error Msg:", pollErr.message);
+
+        if (pollErr.code === '42703' || pollErr.message?.includes('creator_id')) {
+           throw new Error("Erreur de schéma : La colonne 'creator_id' n'est pas reconnue. Veuillez exécuter le script SQL 'Ultimate Fix' dans le README.md et attendre 1 minute.");
+        }
+        throw new Error(pollErr.message || "Erreur de base de données lors de la création.");
       }
 
       if (!poll || poll.length === 0) {
-        throw new Error("Le sondage a été créé mais n'a pas pu être récupéré. Vérifiez les politiques RLS.");
+        throw new Error("Le sondage a été créé mais n'a pas pu être récupéré. Vérifiez que vous avez exécuté la partie 'RLS' du script SQL dans le README.");
       }
 
-      const newPoll = poll[0];
-
-      // On prépare les options
-      const options = p.options.map((o: any) => ({ 
-        poll_id: newPoll.id, 
-        label: o.label, 
-        votes: 0 
-      }));
-      
+      const newPollId = poll[0].id;
+      const options = p.options.map((o: any) => ({ poll_id: newPollId, label: o.label, votes: 0 }));
       const { error: optErr } = await supabase.from('poll_options').insert(options);
       
       if (optErr) {
-          console.error("Supabase Options Error:", optErr);
-          // Nettoyage partiel : on tente de supprimer le sondage orphelin
-          await supabase.from('polls').delete().eq('id', newPoll.id);
-          throw new Error(optErr.message || "Erreur lors de la création des options.");
+          await supabase.from('polls').delete().eq('id', newPollId);
+          throw new Error("Erreur lors de la création des options: " + optErr.message);
       }
 
       invalidateCache('polls_list');
-      return newPoll;
+      return poll[0];
     },
     update: async (id: string, p: any) => {
       const { data, error } = await supabase.from('polls').update({
