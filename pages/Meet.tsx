@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Video, ExternalLink, Plus, Trash2, Calendar, Copy, Loader2, Link as LinkIcon, Share2, Pencil } from 'lucide-react';
+import { Video, ExternalLink, Plus, Trash2, Calendar, Copy, Loader2, Link as LinkIcon, Share2, Pencil, Search, Filter } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole, MeetLink } from '../types';
 import Modal from '../components/Modal';
@@ -13,6 +13,10 @@ export default function Meet() {
   const [meetings, setMeetings] = useState<MeetLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Filtres
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dayFilter, setDayFilter] = useState('all');
   
   // Form & Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -38,12 +42,18 @@ export default function Meet() {
 
   const displayedLinks = useMemo(() => {
     return meetings.filter(link => {
-      if (user?.role === UserRole.ADMIN) {
-        return adminViewClass ? link.className === adminViewClass : true;
-      }
-      return link.className === user?.className;
+      const matchesClass = user?.role === UserRole.ADMIN 
+        ? (adminViewClass ? link.className === adminViewClass : true)
+        : link.className === user?.className;
+      
+      const matchesSearch = link.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          link.platform.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesDay = dayFilter === 'all' || link.time.includes(dayFilter);
+
+      return matchesClass && matchesSearch && matchesDay;
     });
-  }, [user, adminViewClass, meetings]);
+  }, [user, adminViewClass, meetings, searchTerm, dayFilter]);
 
   const handleCopy = (link: MeetLink) => {
     navigator.clipboard.writeText(`${link.title} - ${link.url}`).then(() => {
@@ -65,54 +75,27 @@ export default function Meet() {
 
   const handleEdit = (link: MeetLink) => {
     setEditingId(link.id);
-    // Parse existing time string like "Lundi 10:00" if possible, else just use it
     const parts = link.time.split(' ');
-    const day = parts[0] || '';
-    const time = parts[1] || '';
-    
-    setFormData({ 
-      title: link.title, 
-      platform: link.platform as string, 
-      url: link.url, 
-      day: day, 
-      time: time 
-    });
+    setFormData({ title: link.title, platform: link.platform as string, url: link.url, day: parts[0] || '', time: parts[1] || '' });
     setIsModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     try {
       const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || 'Général');
       const timeString = `${formData.day} ${formData.time}`;
-      
       if (editingId) {
-        // UPDATE
-        const updated = await API.meet.update(editingId, {
-           title: formData.title,
-           platform: formData.platform as any,
-           url: formData.url,
-           time: timeString
-        });
+        const updated = await API.meet.update(editingId, { title: formData.title, platform: formData.platform as any, url: formData.url, time: timeString });
         setMeetings(prev => prev.map(m => m.id === editingId ? updated : m));
         addNotification({ title: 'Succès', message: 'Réunion mise à jour.', type: 'success' });
       } else {
-        // CREATE
-        const newMeet = await API.meet.create({
-          title: formData.title,
-          platform: formData.platform as any,
-          url: formData.url,
-          time: timeString,
-          className: targetClass
-        });
+        const newMeet = await API.meet.create({ title: formData.title, platform: formData.platform as any, url: formData.url, time: timeString, className: targetClass });
         setMeetings(prev => [newMeet, ...prev]);
         addNotification({ title: 'Succès', message: 'Réunion ajoutée.', type: 'success' });
       }
-
       setIsModalOpen(false);
       setEditingId(null);
-      setFormData({ title: '', platform: 'Google Meet', url: '', day: '', time: '' });
     } catch (error) {
       addNotification({ title: 'Erreur', message: "Echec.", type: 'alert' });
     }
@@ -129,14 +112,41 @@ export default function Meet() {
     }
   };
 
-  if (loading) return <Loader2 className="animate-spin mx-auto mt-20" />;
+  if (loading) return <Loader2 className="animate-spin mx-auto mt-20 text-primary-500" />;
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="max-w-5xl mx-auto space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Visioconférences</h2>
+        
+        <div className="flex flex-1 items-center gap-2 max-w-lg">
+           <div className="relative flex-1">
+             <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+             <input 
+                type="text" 
+                placeholder="Chercher une réunion..." 
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500"
+             />
+           </div>
+           <select 
+             value={dayFilter}
+             onChange={e => setDayFilter(e.target.value)}
+             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-600 dark:text-gray-300 outline-none cursor-pointer"
+           >
+              <option value="all">Jour (Tous)</option>
+              <option value="Lundi">Lundi</option>
+              <option value="Mardi">Mardi</option>
+              <option value="Mercredi">Mercredi</option>
+              <option value="Jeudi">Jeudi</option>
+              <option value="Vendredi">Vendredi</option>
+              <option value="Samedi">Samedi</option>
+           </select>
+        </div>
+
         {canManage && (
-          <button onClick={openNewModal} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-all">
+          <button onClick={openNewModal} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-all whitespace-nowrap">
             <Plus size={18} /> Ajouter
           </button>
         )}
@@ -159,10 +169,8 @@ export default function Meet() {
                           <a href={link.url} target="_blank" rel="noreferrer" className="text-primary-600 font-bold text-sm flex items-center gap-1 hover:underline mr-4">
                              Rejoindre <ExternalLink size={14} />
                           </a>
-                          
                           <button onClick={() => handleCopy(link)} className="p-2 text-gray-400 hover:text-primary-500" title="Copier le lien"><Copy size={16} /></button>
                           <button onClick={() => handleShare(link)} className="p-2 text-gray-400 hover:text-primary-500" title="Partager"><Share2 size={16} /></button>
-                          
                           {canManage && (
                             <>
                                <button onClick={() => handleEdit(link)} className="p-2 text-gray-400 hover:text-blue-500" title="Modifier"><Pencil size={16} /></button>
@@ -176,7 +184,7 @@ export default function Meet() {
             </tbody>
         </table>
         </div>
-        {displayedLinks.length === 0 && <div className="p-12 text-center text-gray-400">Aucune réunion programmée.</div>}
+        {displayedLinks.length === 0 && <div className="p-12 text-center text-gray-400">Aucune réunion trouvée.</div>}
       </div>
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingId ? "Modifier la réunion" : "Nouvelle Réunion"}>

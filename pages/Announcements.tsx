@@ -5,20 +5,17 @@ import { API } from '../services/api';
 import { 
   Plus, Share2, Copy, Trash2, Loader2, Pencil, 
   Megaphone, AlertTriangle, Info, Pin, 
-  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle, FileText, Download, Sparkles
+  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle, FileText, Download, Sparkles, Search, Filter
 } from 'lucide-react';
 import { UserRole, Announcement, AnnouncementPriority, ExternalLink as LinkType } from '../types';
 import Modal from '../components/Modal';
 import { useNotification } from '../context/NotificationContext';
 
-// Safe text formatter to prevent Error 31
 const formatContent = (text: any) => {
     if (!text || typeof text !== 'string') return null;
-    
     return text.split('\n').map((line, i) => {
         const trimmedLine = line.trim();
         if (!trimmedLine) return <br key={`br-${i}`} />;
-        
         if (trimmedLine.startsWith('- ')) {
             return (
               <li key={`li-${i}`} className="ml-4 list-disc marker:text-gray-400">
@@ -26,8 +23,6 @@ const formatContent = (text: any) => {
               </li>
             );
         }
-
-        // Split by markdown markers and wrap in relevant tags
         const parts = trimmedLine.split(/(\*.*?\*|_.*?_)/g).map((part, j) => {
             if (!part) return "";
             if (part.startsWith('*') && part.endsWith('*')) {
@@ -36,9 +31,8 @@ const formatContent = (text: any) => {
             if (part.startsWith('_') && part.endsWith('_')) {
                 return <em key={`italic-${j}`} className="italic">{part.slice(1, -1)}</em>;
             }
-            return part; // Return string, not object
+            return part;
         });
-        
         return <p key={`p-${i}`} className="mb-1">{parts}</p>;
     });
 };
@@ -50,7 +44,10 @@ export default function Announcements() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Filtres
+  const [searchTerm, setSearchTerm] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState<string>('all');
 
   const [readIds, setReadIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -95,12 +92,19 @@ export default function Announcements() {
 
   const displayedAnnouncements = useMemo(() => {
     return announcements.filter(ann => {
-      if (user?.role === UserRole.ADMIN) {
-        return adminViewClass ? (ann.className === adminViewClass || ann.className === 'Général') : true;
-      }
-      return ann.className === user?.className || ann.className === 'Général';
+      const matchesClass = user?.role === UserRole.ADMIN 
+        ? (adminViewClass ? (ann.className === adminViewClass || ann.className === 'Général') : true)
+        : (ann.className === user?.className || ann.className === 'Général');
+      
+      const matchesSearch = ann.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          ann.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          ann.author.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesPriority = priorityFilter === 'all' || ann.priority === priorityFilter;
+
+      return matchesClass && matchesSearch && matchesPriority;
     });
-  }, [user, adminViewClass, announcements]);
+  }, [user, adminViewClass, announcements, searchTerm, priorityFilter]);
 
   const handleCopy = (e: React.MouseEvent, text: string) => {
     e.stopPropagation();
@@ -143,8 +147,6 @@ export default function Announcements() {
     const url = window.prompt("Lien vers la pièce jointe (PDF, Image, etc.) :");
     if (url && url.startsWith('http')) {
         setFormData(prev => ({...prev, attachments: [...prev.attachments, url]}));
-    } else if (url) {
-        alert("Lien invalide. Doit commencer par http.");
     }
   };
 
@@ -156,17 +158,9 @@ export default function Announcements() {
     e.preventDefault();
     if (submitting) return;
     setSubmitting(true);
-
     try {
       const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || 'Général');
-      const payload = {
-          title: formData.title,
-          content: formData.content,
-          priority: formData.priority,
-          className: targetClass,
-          attachments: formData.attachments
-      };
-
+      const payload = { title: formData.title, content: formData.content, priority: formData.priority, className: targetClass, attachments: formData.attachments };
       if (editingId) {
         const updatedAnn = await API.announcements.update(editingId, payload);
         setAnnouncements(prev => prev.map(a => a.id === editingId ? updatedAnn : a));
@@ -174,7 +168,6 @@ export default function Announcements() {
         const newAnn = await API.announcements.create(payload);
         setAnnouncements(prev => [newAnn, ...prev]);
       }
-
       setIsModalOpen(false);
       addNotification({ title: 'Succès', message: 'Opération réussie.', type: 'success' });
     } catch (error: any) {
@@ -203,12 +196,36 @@ export default function Announcements() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-50/95 dark:bg-gray-900/95 py-4 backdrop-blur-sm">
+      <div className="flex flex-col md:flex-row md:items-center justify-between sticky top-0 z-10 bg-gray-50/95 dark:bg-gray-900/95 py-4 backdrop-blur-sm gap-4">
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
           <Megaphone className="text-primary-500" size={24} /> Avis & Annonces
         </h2>
+        
+        <div className="flex flex-1 items-center gap-2 max-w-xl">
+           <div className="relative flex-1">
+             <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+             <input 
+                type="text" 
+                placeholder="Chercher une annonce..." 
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500"
+             />
+           </div>
+           <select 
+             value={priorityFilter}
+             onChange={e => setPriorityFilter(e.target.value)}
+             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-600 dark:text-gray-300 outline-none cursor-pointer"
+           >
+              <option value="all">Priorité (Toutes)</option>
+              <option value="normal">Normal</option>
+              <option value="important">Important</option>
+              <option value="urgent">Urgent</option>
+           </select>
+        </div>
+
         {canManage && (
-          <button onClick={openNewModal} className="bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-primary-500/20">
+          <button onClick={openNewModal} className="bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-primary-500/20 whitespace-nowrap">
             <Plus size={18} /> <span className="hidden sm:inline">Nouvelle annonce</span>
           </button>
         )}
@@ -217,7 +234,9 @@ export default function Announcements() {
       <div className="space-y-4">
         {displayedAnnouncements.length === 0 ? (
           <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-bold">Aucune annonce</h3>
+            <Search size={40} className="mx-auto text-gray-300 mb-3" />
+            <h3 className="text-lg font-bold text-gray-400">Aucune annonce trouvée</h3>
+            <p className="text-sm text-gray-400">Essayez de modifier vos filtres.</p>
           </div>
         ) : (
           displayedAnnouncements.map((ann) => {
@@ -228,13 +247,11 @@ export default function Announcements() {
                 onClick={() => handleMarkAsRead(ann.id)}
                 className={`relative rounded-2xl border shadow-sm p-6 group transition-all duration-300 ${getPriorityStyle(ann.priority, isUnread)} ${isUnread ? 'ring-2 ring-primary-500/20 shadow-lg scale-[1.01]' : 'opacity-90 hover:opacity-100'}`}
               >
-                {/* Badge NOUVEAU */}
                 {isUnread && (
                     <div className="absolute -top-3 -right-2 bg-primary-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg shadow-xl animate-bounce flex items-center gap-1">
                         <Sparkles size={10} /> Nouveau
                     </div>
                 )}
-
                 <div className="flex justify-between items-start mb-4">
                    <div className="flex items-center gap-3">
                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-colors ${isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
@@ -243,17 +260,12 @@ export default function Announcements() {
                        <div>
                            <div className="flex items-center gap-2">
                               {user?.role === UserRole.STUDENT && (
-                                <div 
-                                  className={`w-2.5 h-2.5 rounded-full shadow-sm transition-all duration-500 ${isUnread ? 'bg-primary-500 animate-pulse scale-125' : 'bg-gray-300 dark:bg-gray-600'}`} 
-                                  title={isUnread ? 'Non lue' : 'Lue'}
-                                />
+                                <div className={`w-2.5 h-2.5 rounded-full shadow-sm transition-all duration-500 ${isUnread ? 'bg-primary-500 animate-pulse scale-125' : 'bg-gray-300 dark:bg-gray-600'}`} />
                               )}
                               <span className={`text-sm transition-colors ${isUnread ? 'font-black text-gray-900 dark:text-white' : 'font-bold text-gray-600 dark:text-gray-400'}`}>
                                 {ann.author}
                               </span>
-                              <span className={`text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded transition-colors ${
-                                  isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30' : 'text-gray-400'
-                              }`}>
+                              <span className={`text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded transition-colors ${isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30' : 'text-gray-400'}`}>
                                 {ann.priority}
                               </span>
                            </div>
@@ -270,32 +282,18 @@ export default function Announcements() {
                       )}
                    </div>
                 </div>
-                
                 <h3 className={`text-xl mb-2 flex items-center gap-2 transition-all ${isUnread ? 'font-black text-gray-900 dark:text-white tracking-tight' : 'font-bold text-gray-700 dark:text-gray-300'}`}>
                    {ann.title}
                 </h3>
-                
                 <div className={`text-sm whitespace-pre-wrap mb-4 transition-colors leading-relaxed ${isUnread ? 'text-gray-800 dark:text-gray-100 font-medium' : 'text-gray-600 dark:text-gray-400'}`}>
                     {formatContent(ann.content)}
                 </div>
-                
                 {ann.attachments && ann.attachments.length > 0 && (
                   <div className={`mt-4 pt-4 border-t transition-colors ${isUnread ? 'border-primary-100 dark:border-primary-800' : 'border-gray-100 dark:border-gray-700'}`}>
                     <p className={`text-[10px] font-black uppercase mb-2 tracking-widest ${isUnread ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400'}`}>Documents joints</p>
                     <div className="flex flex-wrap gap-2">
                       {ann.attachments.map((url, idx) => (
-                        <a 
-                          key={idx} 
-                          href={url} 
-                          target="_blank" 
-                          rel="noreferrer" 
-                          onClick={(e) => e.stopPropagation()}
-                          className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
-                              isUnread 
-                                ? 'bg-white dark:bg-gray-800 border-primary-200 dark:border-primary-700 hover:border-primary-400 hover:shadow-sm' 
-                                : 'bg-gray-50 dark:bg-gray-700/50 border-gray-100 dark:border-gray-600 hover:bg-gray-100'
-                          }`}
-                        >
+                        <a key={idx} href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${isUnread ? 'bg-white dark:bg-gray-800 border-primary-200 dark:border-primary-700 hover:border-primary-400 hover:shadow-sm' : 'bg-gray-50 dark:bg-gray-700/50 border-gray-100 dark:border-gray-600 hover:bg-gray-100'}`}>
                           <FileText size={14} className="text-primary-500" />
                           <span className="truncate max-w-[150px]">Fichier {idx + 1}</span>
                           <Download size={12} className="text-gray-400" />
@@ -312,44 +310,29 @@ export default function Announcements() {
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingId ? "Modifier" : "Nouvelle Annonce"}>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <input 
-            type="text" required value={formData.title} placeholder="Titre"
-            onChange={e => setFormData({...formData, title: e.target.value})}
-            className="w-full px-4 py-2 rounded-xl border dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500"
-          />
+          <input type="text" required value={formData.title} placeholder="Titre" onChange={e => setFormData({...formData, title: e.target.value})} className="w-full px-4 py-2 rounded-xl border dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500" />
           <div className="grid grid-cols-3 gap-2">
               {['normal', 'important', 'urgent'].map(p => (
-                  <button key={p} type="button" onClick={() => setFormData({...formData, priority: p as any})}
-                    className={`py-2 rounded-lg text-xs font-bold border capitalize transition-colors ${formData.priority === p ? 'bg-primary-50 border-primary-500 text-primary-600 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'}`}>
+                  <button key={p} type="button" onClick={() => setFormData({...formData, priority: p as any})} className={`py-2 rounded-lg text-xs font-bold border capitalize transition-colors ${formData.priority === p ? 'bg-primary-50 border-primary-500 text-primary-600 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'}`}>
                     {p}
                   </button>
               ))}
           </div>
-          <textarea 
-            ref={textareaRef} required rows={5} value={formData.content} placeholder="Message..."
-            onChange={e => setFormData({...formData, content: e.target.value})}
-            className="w-full px-4 py-3 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500"
-          />
-          
+          <textarea required rows={5} value={formData.content} placeholder="Message..." onChange={e => setFormData({...formData, content: e.target.value})} className="w-full px-4 py-3 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500" />
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Pièces jointes</label>
-              <button type="button" onClick={handleAddAttachment} className="text-xs text-primary-600 font-bold hover:underline flex items-center gap-1">
-                <Plus size={14} /> Ajouter un lien
-              </button>
+              <button type="button" onClick={handleAddAttachment} className="text-xs text-primary-600 font-bold hover:underline flex items-center gap-1"><Plus size={14} /> Ajouter un lien</button>
             </div>
             <div className="space-y-1">
               {formData.attachments.map((url, idx) => (
                 <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600">
                   <span className="text-xs truncate max-w-[200px]">{url}</span>
-                  <button type="button" onClick={() => handleRemoveAttachment(idx)} className="text-red-500 p-1">
-                    <X size={14} />
-                  </button>
+                  <button type="button" onClick={() => handleRemoveAttachment(idx)} className="text-red-500 p-1"><X size={14} /></button>
                 </div>
               ))}
             </div>
           </div>
-
           <button type="submit" disabled={submitting} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3 rounded-xl transition-opacity disabled:opacity-50">
              {submitting ? 'Envoi...' : 'Publier'}
           </button>
