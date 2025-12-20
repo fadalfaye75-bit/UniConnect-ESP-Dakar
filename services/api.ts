@@ -253,14 +253,48 @@ export const API = {
       invalidateCache('polls_list');
     },
     create: async (p: any) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Veuillez vous reconnecter.");
+
+      // On insère d'abord le sondage
       const { data: poll, error: pollErr } = await supabase.from('polls').insert({
-        question: p.question, classname: p.className || 'Général', is_active: true, start_time: p.startTime, end_time: p.endTime
-      }).select().single();
-      if (pollErr) throw pollErr;
-      const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
-      await supabase.from('poll_options').insert(options);
+        question: p.question, 
+        classname: p.className || 'Général', 
+        is_active: true, 
+        start_time: p.startTime, 
+        end_time: p.endTime,
+        creator_id: user.id
+      }).select(); // On retire .single() pour éviter l'erreur si RLS bloque la lecture immédiate
+      
+      if (pollErr) {
+        console.error("Supabase Poll Error:", pollErr);
+        throw new Error(pollErr.message || "Erreur lors de la création du sondage.");
+      }
+
+      if (!poll || poll.length === 0) {
+        throw new Error("Le sondage a été créé mais n'a pas pu être récupéré. Vérifiez les politiques RLS.");
+      }
+
+      const newPoll = poll[0];
+
+      // On prépare les options
+      const options = p.options.map((o: any) => ({ 
+        poll_id: newPoll.id, 
+        label: o.label, 
+        votes: 0 
+      }));
+      
+      const { error: optErr } = await supabase.from('poll_options').insert(options);
+      
+      if (optErr) {
+          console.error("Supabase Options Error:", optErr);
+          // Nettoyage partiel : on tente de supprimer le sondage orphelin
+          await supabase.from('polls').delete().eq('id', newPoll.id);
+          throw new Error(optErr.message || "Erreur lors de la création des options.");
+      }
+
       invalidateCache('polls_list');
-      return poll;
+      return newPoll;
     },
     update: async (id: string, p: any) => {
       const { data, error } = await supabase.from('polls').update({

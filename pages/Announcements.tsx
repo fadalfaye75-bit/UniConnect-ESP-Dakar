@@ -5,7 +5,7 @@ import { API } from '../services/api';
 import { 
   Plus, Share2, Copy, Trash2, Loader2, Pencil, 
   Megaphone, AlertTriangle, Info, Pin, 
-  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle, FileText, Download
+  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle, FileText, Download, Sparkles
 } from 'lucide-react';
 import { UserRole, Announcement, AnnouncementPriority, ExternalLink as LinkType } from '../types';
 import Modal from '../components/Modal';
@@ -31,10 +31,10 @@ const formatContent = (text: any) => {
         const parts = trimmedLine.split(/(\*.*?\*|_.*?_)/g).map((part, j) => {
             if (!part) return "";
             if (part.startsWith('*') && part.endsWith('*')) {
-                return <strong key={`bold-${j}`} className="font-bold text-gray-900 dark:text-white">{part.slice(1, -1)}</strong>;
+                return <strong key={`bold-${j}`} className="font-bold">{part.slice(1, -1)}</strong>;
             }
             if (part.startsWith('_') && part.endsWith('_')) {
-                return <em key={`italic-${j}`} className="italic text-gray-700 dark:text-gray-300">{part.slice(1, -1)}</em>;
+                return <em key={`italic-${j}`} className="italic">{part.slice(1, -1)}</em>;
             }
             return part; // Return string, not object
         });
@@ -184,11 +184,18 @@ export default function Announcements() {
     }
   };
 
-  const getPriorityStyle = (priority: AnnouncementPriority) => {
+  const getPriorityStyle = (priority: AnnouncementPriority, isUnread: boolean) => {
+      if (isUnread) {
+          switch(priority) {
+              case 'urgent': return 'border-red-500 bg-red-50 dark:bg-red-900/20 dark:border-red-400';
+              case 'important': return 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 dark:border-yellow-400';
+              default: return 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400';
+          }
+      }
       switch(priority) {
-          case 'urgent': return 'border-red-200 bg-red-50/50 dark:bg-red-900/10 dark:border-red-800';
-          case 'important': return 'border-yellow-200 bg-yellow-50/50 dark:bg-yellow-900/10 dark:border-yellow-800';
-          default: return 'border-blue-100 bg-white dark:bg-gray-800 dark:border-gray-700';
+          case 'urgent': return 'border-red-200 bg-white dark:bg-gray-800 dark:border-red-900/30';
+          case 'important': return 'border-yellow-200 bg-white dark:bg-gray-800 dark:border-yellow-900/30';
+          default: return 'border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700';
       }
   };
 
@@ -219,28 +226,41 @@ export default function Announcements() {
               <div 
                 key={ann.id} 
                 onClick={() => handleMarkAsRead(ann.id)}
-                className={`relative rounded-2xl border shadow-sm p-6 group transition-all ${getPriorityStyle(ann.priority)} ${isUnread ? 'ring-2 ring-primary-400 dark:ring-primary-500 bg-primary-50/10' : ''}`}
+                className={`relative rounded-2xl border shadow-sm p-6 group transition-all duration-300 ${getPriorityStyle(ann.priority, isUnread)} ${isUnread ? 'ring-2 ring-primary-500/20 shadow-lg scale-[1.01]' : 'opacity-90 hover:opacity-100'}`}
               >
+                {/* Badge NOUVEAU */}
+                {isUnread && (
+                    <div className="absolute -top-3 -right-2 bg-primary-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg shadow-xl animate-bounce flex items-center gap-1">
+                        <Sparkles size={10} /> Nouveau
+                    </div>
+                )}
+
                 <div className="flex justify-between items-start mb-4">
                    <div className="flex items-center gap-3">
-                       <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center font-bold">
+                       <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-colors ${isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
                            {ann.author.charAt(0)}
                        </div>
                        <div>
                            <div className="flex items-center gap-2">
                               {user?.role === UserRole.STUDENT && (
                                 <div 
-                                  className={`w-2.5 h-2.5 rounded-full shadow-sm transition-colors ${isUnread ? 'bg-primary-500 animate-pulse' : 'bg-gray-300 dark:bg-gray-600'}`} 
+                                  className={`w-2.5 h-2.5 rounded-full shadow-sm transition-all duration-500 ${isUnread ? 'bg-primary-500 animate-pulse scale-125' : 'bg-gray-300 dark:bg-gray-600'}`} 
                                   title={isUnread ? 'Non lue' : 'Lue'}
                                 />
                               )}
-                              <span className="text-sm font-bold">{ann.author}</span>
-                              <span className="text-[10px] uppercase font-bold text-gray-400">{ann.priority}</span>
+                              <span className={`text-sm transition-colors ${isUnread ? 'font-black text-gray-900 dark:text-white' : 'font-bold text-gray-600 dark:text-gray-400'}`}>
+                                {ann.author}
+                              </span>
+                              <span className={`text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded transition-colors ${
+                                  isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30' : 'text-gray-400'
+                              }`}>
+                                {ann.priority}
+                              </span>
                            </div>
-                           <div className="text-xs text-gray-500">{new Date(ann.date).toLocaleDateString()} • {ann.className}</div>
+                           <div className="text-[10px] text-gray-500 font-medium">{new Date(ann.date).toLocaleDateString()} • {ann.className}</div>
                        </div>
                    </div>
-                   <div className="flex gap-1 opacity-0 group-hover:opacity-100">
+                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={(e) => handleCopy(e, ann.content)} className="p-1.5 text-gray-400 hover:text-primary-500"><Copy size={14} /></button>
                       {canManage && (
                           <>
@@ -250,16 +270,18 @@ export default function Announcements() {
                       )}
                    </div>
                 </div>
-                <h3 className="text-lg font-bold mb-2 flex items-center gap-2">
+                
+                <h3 className={`text-xl mb-2 flex items-center gap-2 transition-all ${isUnread ? 'font-black text-gray-900 dark:text-white tracking-tight' : 'font-bold text-gray-700 dark:text-gray-300'}`}>
                    {ann.title}
                 </h3>
-                <div className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap mb-4">
+                
+                <div className={`text-sm whitespace-pre-wrap mb-4 transition-colors leading-relaxed ${isUnread ? 'text-gray-800 dark:text-gray-100 font-medium' : 'text-gray-600 dark:text-gray-400'}`}>
                     {formatContent(ann.content)}
                 </div>
                 
                 {ann.attachments && ann.attachments.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Pièces jointes</p>
+                  <div className={`mt-4 pt-4 border-t transition-colors ${isUnread ? 'border-primary-100 dark:border-primary-800' : 'border-gray-100 dark:border-gray-700'}`}>
+                    <p className={`text-[10px] font-black uppercase mb-2 tracking-widest ${isUnread ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400'}`}>Documents joints</p>
                     <div className="flex flex-wrap gap-2">
                       {ann.attachments.map((url, idx) => (
                         <a 
@@ -268,7 +290,11 @@ export default function Announcements() {
                           target="_blank" 
                           rel="noreferrer" 
                           onClick={(e) => e.stopPropagation()}
-                          className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-700 rounded-lg text-xs font-medium hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border border-gray-100 dark:border-gray-600"
+                          className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                              isUnread 
+                                ? 'bg-white dark:bg-gray-800 border-primary-200 dark:border-primary-700 hover:border-primary-400 hover:shadow-sm' 
+                                : 'bg-gray-50 dark:bg-gray-700/50 border-gray-100 dark:border-gray-600 hover:bg-gray-100'
+                          }`}
                         >
                           <FileText size={14} className="text-primary-500" />
                           <span className="truncate max-w-[150px]">Fichier {idx + 1}</span>

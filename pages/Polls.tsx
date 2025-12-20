@@ -14,6 +14,7 @@ export default function Polls() {
   
   const [polls, setPolls] = useState<Poll[]>([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isResultsModalOpen, setIsResultsModalOpen] = useState(false);
   const [selectedPollForResults, setSelectedPollForResults] = useState<Poll | null>(null);
@@ -37,7 +38,7 @@ export default function Polls() {
         if (updated) setSelectedPollForResults(updated);
       }
     } catch (error) {
-      addNotification({ title: 'Erreur', message: 'Impossible de charger.', type: 'alert' });
+      addNotification({ title: 'Erreur', message: 'Impossible de charger les sondages.', type: 'alert' });
     } finally {
       if(showLoader) setLoading(false);
     }
@@ -54,7 +55,7 @@ export default function Polls() {
       if (user?.role === UserRole.ADMIN) {
         return adminViewClass ? poll.className === adminViewClass : true;
       }
-      return poll.className === user?.className;
+      return poll.className === user?.className || poll.className === 'Général';
     }).sort((a, b) => {
         return (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0);
     });
@@ -96,19 +97,11 @@ export default function Polls() {
     }
 
     try {
-      const currentPoll = polls.find(p => p.id === pollId);
-      const isChangingVote = currentPoll?.hasVoted;
-
       await API.polls.vote(pollId, optionId);
-      
-      addNotification({ 
-          title: isChangingVote ? 'Vote modifié' : 'A voté !', 
-          message: isChangingVote ? 'Votre nouveau choix a été enregistré.' : 'Choix enregistré.', 
-          type: 'success' 
-      });
+      addNotification({ title: 'Vote enregistré', message: 'Merci pour votre participation.', type: 'success' });
       fetchPolls(false);
     } catch (error: any) {
-      addNotification({ title: 'Erreur', message: error.message || 'Impossible de voter.', type: 'alert' });
+      addNotification({ title: 'Erreur', message: 'Impossible d\'enregistrer votre vote.', type: 'alert' });
     }
   };
 
@@ -116,26 +109,28 @@ export default function Polls() {
     try {
       await API.polls.toggleStatus(poll.id);
       fetchPolls(false);
+      addNotification({ title: 'Statut mis à jour', message: poll.isActive ? 'Sondage fermé.' : 'Sondage ouvert.', type: 'info' });
     } catch (error) {
-       addNotification({ title: 'Erreur', message: 'Impossible de changer le statut.', type: 'alert' });
+       addNotification({ title: 'Erreur', message: 'Action impossible.', type: 'alert' });
     }
   };
 
   const handleShare = (poll: Poll) => {
-    const subject = encodeURIComponent(`Sondage: ${poll.question}`);
-    const body = encodeURIComponent(`Répondez au sondage : ${poll.question}\n\nAccédez à la plateforme pour voter.`);
-    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    const text = `Sondage UniConnect: ${poll.question}\nRépondez ici : ${window.location.origin}/#/polls`;
+    navigator.clipboard.writeText(text).then(() => {
+      addNotification({ title: 'Lien copié', message: 'Vous pouvez maintenant le partager.', type: 'success' });
+    });
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!window.confirm('Voulez-vous vraiment supprimer ce sondage ? Cette action est irréversible.')) return;
+    if (!window.confirm('Supprimer ce sondage ?')) return;
     try {
       await API.polls.delete(id);
       setPolls(prev => prev.filter(p => p.id !== id));
-      addNotification({ title: 'Succès', message: 'Sondage supprimé.', type: 'info' });
+      addNotification({ title: 'Supprimé', message: 'Le sondage a été retiré.', type: 'info' });
     } catch (error) {
-      addNotification({ title: 'Erreur', message: 'Impossible de supprimer.', type: 'alert' });
+      addNotification({ title: 'Erreur', message: 'Action échouée.', type: 'alert' });
     }
   };
 
@@ -165,9 +160,15 @@ export default function Polls() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
     const validOptions = options.filter(o => o.trim() !== '');
-    if (validOptions.length < 2) return alert('Min 2 options');
+    if (validOptions.length < 2) {
+        addNotification({ title: 'Données insuffisantes', message: 'Veuillez ajouter au moins 2 options.', type: 'warning' });
+        return;
+    }
     
+    setSubmitting(true);
     try {
       const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || 'Général');
       
@@ -179,24 +180,24 @@ export default function Polls() {
 
       if (editingId) {
         await API.polls.update(editingId, payload);
-        fetchPolls(false);
-        addNotification({ title: 'Succès', message: 'Sondage mis à jour.', type: 'success' });
+        addNotification({ title: 'Mis à jour', message: 'Les modifications ont été enregistrées.', type: 'success' });
       } else {
         payload.className = targetClass;
         payload.options = validOptions.map((label) => ({ label }));
-        
         await API.polls.create(payload);
-        fetchPolls(false); 
-        addNotification({ title: 'Sondage créé', message: 'Succès.', type: 'success' });
+        addNotification({ title: 'Sondage lancé', message: 'Les étudiants peuvent maintenant voter.', type: 'success' });
       }
 
+      await fetchPolls(false);
       setIsModalOpen(false);
-      setQuestion('');
-      setOptions(['', '']);
-      setDates({ start: '', end: '' });
       setEditingId(null);
-    } catch (error) {
-      addNotification({ title: 'Erreur', message: 'Echec création.', type: 'alert' });
+    } catch (error: any) {
+      console.error("Poll Submission Error:", error);
+      // Extraction du message pour éviter [object Object]
+      const errorMsg = error instanceof Error ? error.message : (error?.message || "Erreur de base de données (Vérifiez votre script SQL).");
+      addNotification({ title: 'Erreur', message: errorMsg, type: 'alert' });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -562,8 +563,12 @@ export default function Polls() {
               </button>
            </div>
 
-           <button type="submit" className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5 active:scale-[0.99] flex justify-center">
-             {editingId ? 'Mettre à jour' : 'Lancer le sondage'}
+           <button 
+             type="submit" 
+             disabled={submitting}
+             className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5 active:scale-[0.99] flex justify-center items-center gap-2"
+           >
+             {submitting ? <Loader2 className="animate-spin" size={18} /> : (editingId ? 'Mettre à jour' : 'Lancer le sondage')}
            </button>
         </form>
       </Modal>
@@ -582,13 +587,13 @@ export default function Polls() {
                     {selectedPollForResults.question}
                 </h4>
                 <div className="flex flex-wrap gap-4 mt-4">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-600">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
                         <Users size={16} className="text-primary-500" />
                         <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
                             {selectedPollForResults.totalVotes} <span className="text-gray-400 font-medium">participations</span>
                         </span>
                     </div>
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-600">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
                         <Trophy size={16} className="text-yellow-500" />
                         <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
                             Option en tête : <span className="text-primary-600">
@@ -644,7 +649,7 @@ export default function Polls() {
                             ? Math.round((opt.votes / selectedPollForResults.totalVotes) * 100) 
                             : 0;
                         return (
-                            <div key={opt.id} className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600">
+                            <div key={opt.id} className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
                                 <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{backgroundColor: COLORS[idx % COLORS.length]}}>
                                     {idx + 1}
                                 </div>
