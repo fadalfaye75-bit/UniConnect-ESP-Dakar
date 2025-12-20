@@ -22,18 +22,16 @@ interface SearchResult {
 
 export default function Layout() {
   const { user, logout, toggleTheme, isDarkMode, adminViewClass, setAdminViewClass } = useAuth();
-  const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications, requestPermission, permission } = useNotification();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications } = useNotification();
   
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isSearchOpen, setSearchOpen] = useState(false);
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
   
   const [classesList, setClassesList] = useState<{id: string, name: string}[]>([]);
   
-  // Cache local pour la recherche pour éviter de requêter l'API à chaque lettre
   const [fullData, setFullData] = useState<{
     anns: any[],
     exams: any[],
@@ -56,23 +54,25 @@ export default function Layout() {
       }
   }, [user]);
 
-  // Pré-chargement des données de recherche quand le modal s'ouvre
   useEffect(() => {
     if (isSearchOpen && !fullData) {
       const loadSearchData = async () => {
-        const [anns, exams, meets, polls] = await Promise.all([
-          API.announcements.list(100),
-          API.exams.list(),
-          API.meet.list(),
-          API.polls.list()
-        ]);
-        setFullData({ anns, exams, meets, polls });
+        try {
+          const [anns, exams, meets, polls] = await Promise.all([
+            API.announcements.list(100),
+            API.exams.list(),
+            API.meet.list(),
+            API.polls.list()
+          ]);
+          setFullData({ anns, exams, meets, polls });
+        } catch (e) {
+          console.error("Search data load error", e);
+        }
       };
       loadSearchData();
     }
   }, [isSearchOpen, fullData]);
 
-  // Filtrage local performant des résultats de recherche
   const searchResults = useMemo(() => {
     if (!searchQuery.trim() || !fullData) return [];
     
@@ -146,17 +146,17 @@ export default function Layout() {
   }, [isSearchOpen]);
 
   const navItems = [
-    { to: '/', icon: LayoutDashboard, label: 'Tableau de Bord' },
+    { to: '/', icon: LayoutDashboard, label: 'Tableau de Bord', end: true },
     { to: '/announcements', icon: Megaphone, label: 'Annonces' },
     { to: '/schedule', icon: Calendar, label: 'Emploi du Temps' },
     { to: '/exams', icon: GraduationCap, label: 'Examens' },
     { to: '/meet', icon: Video, label: 'Visioconférence' },
     { to: '/polls', icon: BarChart2, label: 'Consultations' },
-    { to: '/profile', icon: Settings, label: 'Mon Profil' },
+    { to: '/profile', icon: UserCircle, label: 'Mon Profil' },
   ];
 
   if (user?.role === 'ADMIN') {
-    navItems.push({ to: '/admin', icon: ShieldCheck, label: 'Administration' });
+    navItems.push({ to: '/admin', icon: ShieldCheck, label: 'Administration' } as any);
   }
 
   const handleResultClick = (link: string) => {
@@ -184,16 +184,19 @@ export default function Layout() {
   const handleLogout = () => {
     if (window.confirm("Se déconnecter de la plateforme ?")) {
       logout();
+      navigate('/login');
     }
   };
 
   return (
-    <div className="flex h-screen bg-gray-100 dark:bg-gray-900 transition-colors font-sans">
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-900 transition-colors font-sans overflow-hidden">
       
+      {/* Sidebar Mobile Overlay */}
       {isSidebarOpen && (
         <div className="fixed inset-0 z-40 bg-gray-800/60 md:hidden backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />
       )}
 
+      {/* Desktop & Mobile Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 border-r border-gray-100 dark:border-gray-700 transform transition-transform duration-300 ease-in-out md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} shadow-lg md:shadow-none flex flex-col`}>
         <div className="flex items-center justify-between p-6 h-20 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -211,10 +214,14 @@ export default function Layout() {
         </div>
 
         <div className="px-4 py-2 flex-1 overflow-y-auto custom-scrollbar">
-          <NavLink to="/profile" className="flex items-center gap-3 mb-8 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group border border-transparent hover:border-gray-100 dark:hover:border-gray-600">
-             <div className="relative">
-                <img src={user?.avatar} alt="Profile" className="w-10 h-10 rounded-full object-cover border-2 border-primary-100 dark:border-gray-600" />
-                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full"></div>
+          {/* User Profile Summary */}
+          <NavLink 
+            to="/profile" 
+            className={({isActive}) => `flex items-center gap-3 mb-8 p-3 rounded-xl transition-all group border ${isActive ? 'bg-primary-50/50 border-primary-100 dark:bg-primary-900/10 dark:border-primary-800/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50 border-transparent hover:border-gray-100 dark:hover:border-gray-600'}`}
+          >
+             <div className="relative flex-shrink-0">
+                <img src={user?.avatar} alt="Profile" className="w-12 h-12 rounded-full object-cover border-[3px] border-primary-500 dark:border-primary-400 shadow-lg ring-2 ring-white dark:ring-gray-800 transition-all group-hover:scale-105" />
+                <div className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full shadow-sm"></div>
              </div>
              <div className="flex-1 min-w-0">
                <p className="text-sm font-bold truncate text-gray-800 dark:text-white">{user?.name}</p>
@@ -222,11 +229,12 @@ export default function Layout() {
              </div>
           </NavLink>
 
+          {/* Admin Switcher */}
           {user?.role === 'ADMIN' && (
-            <div className="mb-6 px-1">
+            <div className="mb-6 px-1 animate-in slide-in-from-left duration-300">
                <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider ml-2 mb-2 block">Vue Administrative</label>
                <select 
-                className="w-full p-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-300 transition-all"
+                className="w-full p-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-300 transition-all cursor-pointer"
                 value={adminViewClass || ''}
                 onChange={(e) => setAdminViewClass(e.target.value || null)}
                >
@@ -236,25 +244,28 @@ export default function Layout() {
             </div>
           )}
 
+          {/* Navigation Links */}
           <nav className="space-y-1">
             <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider ml-2 mb-2 block">Menu Principal</label>
             {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
-                className={({ isActive }) => `flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg transition-all duration-200 
+                end={item.end}
+                className={({ isActive }) => `flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg transition-all duration-200 group
                   ${isActive 
                     ? 'bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-300 shadow-sm border border-primary-100 dark:border-primary-800/30' 
                     : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-gray-200'
                   }`}
               >
-                <item.icon size={18} className="text-current opacity-70" />
+                <item.icon size={18} className={`transition-colors ${location.pathname === item.to || (item.to === '/' && location.pathname === '/') ? 'text-primary-500' : 'text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300'}`} />
                 {item.label}
               </NavLink>
             ))}
           </nav>
         </div>
 
+        {/* Sidebar Footer */}
         <div className="p-4 m-4 border-t border-gray-100 dark:border-gray-700">
           <button onClick={handleLogout} className="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-900/20 rounded-lg transition-colors">
             <LogOut size={18} />
@@ -263,10 +274,11 @@ export default function Layout() {
         </div>
       </aside>
 
+      {/* Main Content Area */}
       <div className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-gray-900">
         <header className="h-20 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md border-b border-gray-100 dark:border-gray-700 flex items-center justify-between px-6 z-20 sticky top-0">
           <div className="flex items-center gap-3 md:hidden">
-            <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-gray-600 dark:text-gray-300">
+            <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
               <Menu size={24} />
             </button>
             <span className="font-bold text-lg text-gray-800 dark:text-white">UniConnect</span>
@@ -282,8 +294,8 @@ export default function Layout() {
              </div>
           </div>
 
-          <div className="flex items-center gap-4">
-             <button onClick={() => setSearchOpen(true)} className="md:hidden p-2 text-gray-600 dark:text-gray-300">
+          <div className="flex items-center gap-2 sm:gap-4">
+             <button onClick={() => setSearchOpen(true)} className="md:hidden p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
                 <Search size={20} />
              </button>
              
@@ -300,8 +312,8 @@ export default function Layout() {
                      <div className="flex items-center justify-between p-4 border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800">
                        <h3 className="font-bold text-sm text-gray-800 dark:text-white">Notifications</h3>
                        <div className="flex gap-1">
-                         <button onClick={markAllAsRead} className="p-1.5 text-primary-600 hover:bg-primary-50 dark:text-primary-400 rounded-lg"><Check size={16} /></button>
-                         <button onClick={() => { if(window.confirm('Effacer tout?')) clearNotifications(); }} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg"><Trash2 size={16} /></button>
+                         <button onClick={markAllAsRead} className="p-1.5 text-primary-600 hover:bg-primary-50 dark:text-primary-400 rounded-lg" title="Tout lire"><Check size={16} /></button>
+                         <button onClick={() => { if(window.confirm('Effacer tout?')) clearNotifications(); }} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg" title="Tout effacer"><Trash2 size={16} /></button>
                        </div>
                      </div>
                      
@@ -332,7 +344,7 @@ export default function Layout() {
                 )}
              </div>
 
-             <button onClick={toggleTheme} className="p-2.5 text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors">
+             <button onClick={toggleTheme} className="p-2.5 text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors" title="Changer de thème">
                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
              </button>
              
@@ -348,28 +360,31 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 sm:p-8 pb-24 md:pb-8 bg-gray-50/50 dark:bg-gray-900 custom-scrollbar">
+        {/* Scrollable Content */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-8 pb-24 md:pb-8 bg-gray-50/50 dark:bg-gray-900 custom-scrollbar animate-fade-in">
           <Outlet />
         </main>
 
+        {/* Mobile Navigation Bar */}
         <nav className="md:hidden fixed bottom-0 w-full bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex justify-around py-3 z-30 shadow-soft">
-          <NavLink to="/" className={({isActive}) => `p-2 rounded-xl ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
+          <NavLink to="/" end className={({isActive}) => `p-2 rounded-xl transition-all ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
             <LayoutDashboard size={24} />
           </NavLink>
-          <NavLink to="/announcements" className={({isActive}) => `p-2 rounded-xl ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
+          <NavLink to="/announcements" className={({isActive}) => `p-2 rounded-xl transition-all ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
             <Megaphone size={24} />
           </NavLink>
-          <NavLink to="/exams" className={({isActive}) => `p-2 rounded-xl ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
+          <NavLink to="/exams" className={({isActive}) => `p-2 rounded-xl transition-all ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
             <GraduationCap size={24} />
           </NavLink>
-          <NavLink to="/profile" className={({isActive}) => `p-2 rounded-xl ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
+          <NavLink to="/profile" className={({isActive}) => `p-2 rounded-xl transition-all ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
              <UserCircle size={24} />
           </NavLink>
         </nav>
       </div>
 
+      {/* Global Toast Notification */}
       {activeToast && (
-        <div className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-50 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-100 dark:border-gray-700 animate-in slide-in-from-right-10 overflow-hidden">
+        <div className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-[100] w-80 bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-100 dark:border-gray-700 animate-in slide-in-from-right-10 overflow-hidden">
           <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary-500"></div>
           <div className="p-4 flex gap-3">
              <div className="mt-0.5">{getNotifIcon(activeToast.type)}</div>
@@ -382,6 +397,7 @@ export default function Layout() {
         </div>
       )}
 
+      {/* Global Search Modal */}
       {isSearchOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-24 px-4 bg-gray-900/60 backdrop-blur-sm" onClick={() => setSearchOpen(false)}>
            <div className="w-full max-w-2xl bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[70vh] border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
@@ -395,6 +411,9 @@ export default function Layout() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+                <button onClick={() => setSearchOpen(false)} className="absolute right-5 top-5 p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+                    <X size={20} />
+                </button>
              </div>
              
              <div className="flex-1 overflow-y-auto p-2 bg-gray-50 dark:bg-gray-900/20 custom-scrollbar">

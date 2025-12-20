@@ -5,7 +5,7 @@ import { API } from '../services/api';
 import { 
   Plus, Share2, Copy, Trash2, Loader2, Pencil, 
   Megaphone, AlertTriangle, Info, Pin, 
-  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload
+  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle
 } from 'lucide-react';
 import { UserRole, Announcement, AnnouncementPriority, ExternalLink as LinkType } from '../types';
 import Modal from '../components/Modal';
@@ -205,7 +205,7 @@ export default function Announcements() {
               <div 
                 key={ann.id} 
                 onClick={() => handleMarkAsRead(ann.id)}
-                className={`relative rounded-2xl border shadow-sm p-6 group transition-all ${getPriorityStyle(ann.priority)} ${isUnread ? 'ring-1 ring-primary-300' : ''}`}
+                className={`relative rounded-2xl border shadow-sm p-6 group transition-all ${getPriorityStyle(ann.priority)} ${isUnread ? 'ring-2 ring-primary-400 dark:ring-primary-500 bg-primary-50/10' : ''}`}
               >
                 <div className="flex justify-between items-start mb-4">
                    <div className="flex items-center gap-3">
@@ -214,6 +214,12 @@ export default function Announcements() {
                        </div>
                        <div>
                            <div className="flex items-center gap-2">
+                              {user?.role === UserRole.STUDENT && (
+                                <div 
+                                  className={`w-2.5 h-2.5 rounded-full shadow-sm transition-colors ${isUnread ? 'bg-primary-500 animate-pulse' : 'bg-gray-300 dark:bg-gray-600'}`} 
+                                  title={isUnread ? 'Non lue' : 'Lue'}
+                                />
+                              )}
                               <span className="text-sm font-bold">{ann.author}</span>
                               <span className="text-[10px] uppercase font-bold text-gray-400">{ann.priority}</span>
                            </div>
@@ -230,7 +236,9 @@ export default function Announcements() {
                       )}
                    </div>
                 </div>
-                <h3 className="text-lg font-bold mb-2">{ann.title}</h3>
+                <h3 className="text-lg font-bold mb-2 flex items-center gap-2">
+                   {ann.title}
+                </h3>
                 <div className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">
                     {formatContent(ann.content)}
                 </div>

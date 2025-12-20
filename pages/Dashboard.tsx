@@ -3,8 +3,21 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API } from '../services/api';
 import { Announcement, Exam, UserRole } from '../types';
-import { Clock, FileText, GraduationCap, Loader2, ChevronRight, BarChart2, Calendar, Video, Settings } from 'lucide-react';
+import { Clock, FileText, GraduationCap, Loader2, ChevronRight, BarChart2, Calendar, Video, Settings, ArrowRight, User } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+
+const getAnnouncementImage = (id: string) => {
+  // Deterministic selection of professional university-themed images
+  const images = [
+    'https://images.unsplash.com/photo-1523050335392-9bef867a0578?auto=format&fit=crop&q=80&w=800',
+    'https://images.unsplash.com/photo-1541339907198-e08756ebafe3?auto=format&fit=crop&q=80&w=800',
+    'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800',
+    'https://images.unsplash.com/photo-1498243639359-2cee506b74ad?auto=format&fit=crop&q=80&w=800',
+    'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=80&w=800'
+  ];
+  const index = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % images.length;
+  return images[index];
+};
 
 export default function Dashboard() {
   const { user, adminViewClass } = useAuth();
@@ -22,13 +35,11 @@ export default function Dashboard() {
 
   const fetchDashboardData = async () => {
     try {
-      // On affiche les données déjà présentes en cache si possible (vécu par API.ts)
       setLoading(announcements.length === 0);
       
       const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || '');
       const isAdmin = user?.role === UserRole.ADMIN && !adminViewClass;
 
-      // Requêtes parallèles pour gagner du temps
       const [allAnns, allExams] = await Promise.all([
           API.announcements.list(5),
           API.exams.list()
@@ -131,17 +142,59 @@ export default function Dashboard() {
                <h3 className="font-black text-gray-900 dark:text-white uppercase text-xs tracking-widest">Derniers Avis</h3>
                <Link to="/announcements" className="text-[10px] text-primary-600 font-black hover:underline uppercase tracking-widest">Lire tout</Link>
             </div>
-            <div className="grid gap-4">
+            <div className="grid md:grid-cols-2 gap-6">
               {announcements.map(ann => (
-                <div key={ann.id} onClick={() => navigate('/announcements')} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 hover:border-primary-400 transition-all cursor-pointer group">
-                  <div className="flex justify-between items-start mb-3">
-                    <h4 className="font-bold text-gray-900 dark:text-white group-hover:text-primary-600 transition-colors">{ann.title}</h4>
-                    <span className="text-[10px] font-bold text-gray-400">{new Date(ann.date).toLocaleDateString()}</span>
+                <div 
+                  key={ann.id} 
+                  onClick={() => navigate('/announcements')} 
+                  className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 hover:shadow-xl hover:border-primary-300 transition-all cursor-pointer group flex flex-col overflow-hidden"
+                >
+                  <div className="relative h-40 overflow-hidden">
+                    <img 
+                      src={getAnnouncementImage(ann.id)} 
+                      alt={ann.title}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                    <div className="absolute top-3 left-3">
+                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-md text-white shadow-sm border ${
+                        ann.priority === 'urgent' ? 'bg-red-500 border-red-400' : 
+                        ann.priority === 'important' ? 'bg-orange-500 border-orange-400' : 
+                        'bg-primary-500 border-primary-400'
+                      }`}>
+                        {ann.priority}
+                      </span>
+                    </div>
+                    <div className="absolute bottom-3 left-3 flex items-center gap-2 text-white">
+                       <div className="w-6 h-6 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30">
+                          <User size={12} />
+                       </div>
+                       <span className="text-[10px] font-bold opacity-90">{ann.author}</span>
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">{ann.content}</p>
+                  
+                  <div className="p-5 flex-1 flex flex-col">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-bold text-gray-900 dark:text-white group-hover:text-primary-600 transition-colors line-clamp-1 leading-tight">{ann.title}</h4>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed mb-4 flex-1">{ann.content}</p>
+                    <div className="flex items-center justify-between mt-auto">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-1">
+                          <Clock size={12} /> {new Date(ann.date).toLocaleDateString()}
+                        </span>
+                        <div className="text-primary-500 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
+                           <ArrowRight size={14} />
+                        </div>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
+            {announcements.length === 0 && (
+               <div className="p-12 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 text-center text-gray-400 text-sm font-medium">
+                 Aucun avis disponible pour le moment.
+               </div>
+            )}
           </section>
         </div>
 

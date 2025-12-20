@@ -180,7 +180,6 @@ export const API = {
       invalidateCache('announcements_');
       return mapAnnouncement(data);
     },
-    // Fixed: Added missing update method
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
         title: ann.title, content: ann.content, priority: ann.priority,
@@ -228,7 +227,39 @@ export const API = {
     },
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user?.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
+      if (!user) return;
+
+      // Enregistrement du vote
+      await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
+      
+      // Récupération des infos pour la notification
+      const { data: poll } = await supabase.from('polls').select('question, classname').eq('id', pollId).single();
+      const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).single();
+
+      if (poll) {
+        const studentName = profile?.full_name || 'Un étudiant';
+        const questionText = poll.question.length > 30 ? poll.question.substring(0, 30) + '...' : poll.question;
+
+        // Notifier le délégué de la classe
+        await API.notifications.add({
+          title: 'Participation au sondage',
+          message: `${studentName} a répondu à : "${questionText}"`,
+          type: 'info',
+          targetClass: poll.classname,
+          targetRole: UserRole.DELEGATE,
+          link: '/polls'
+        });
+
+        // Notifier l'administrateur
+        await API.notifications.add({
+          title: 'Activité Sondage',
+          message: `Nouveau vote dans la classe ${poll.classname} pour "${questionText}"`,
+          type: 'info',
+          targetRole: UserRole.ADMIN,
+          link: '/polls'
+        });
+      }
+
       invalidateCache('polls_list');
     },
     create: async (p: any) => {
@@ -241,7 +272,6 @@ export const API = {
       invalidateCache('polls_list');
       return poll;
     },
-    // Fixed: Added missing update method
     update: async (id: string, p: any) => {
       const { data, error } = await supabase.from('polls').update({
         question: p.question, start_time: p.startTime, end_time: p.endTime
@@ -281,7 +311,6 @@ export const API = {
       invalidateCache('exams_list');
       return { ...exam, id: data.id };
     },
-    // Fixed: Added missing update method
     update: async (id: string, exam: any) => {
       const { data, error } = await supabase.from('exams').update({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
@@ -310,7 +339,6 @@ export const API = {
       await supabase.from('classes').insert({ name, email });
       invalidateCache('classes_list');
     },
-    // Fixed: Added missing update method
     update: async (id: string, cls: { name: string, email: string }) => {
       await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
       invalidateCache('classes_list');
@@ -323,22 +351,62 @@ export const API = {
 
   notifications: {
     list: async (limit = 20): Promise<AppNotification[]> => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getSession();
       if (!user) return [];
+      
+      const { data: profile } = await supabase.from('profiles').select('role, classname').eq('id', user.id).single();
+      const role = profile?.role?.toUpperCase();
+      const className = profile?.classname;
+
+      // Construction de la requête avec filtres de ciblage
+      let orFilter = `user_id.eq.${user.id},target_class.eq.Général`;
+      
+      if (role === 'ADMIN') {
+        orFilter += `,target_role.eq.ADMIN`;
+      } else if (role === 'DELEGATE') {
+        // Un délégué reçoit les notifs pour son rôle DANS sa classe
+        orFilter += `,target_role.eq.DELEGATE`;
+      }
+
       const { data } = await supabase.from('notifications')
         .select('*')
-        .or(`user_id.eq.${user.id},target_class.eq.Général`)
+        .or(orFilter)
         .order('created_at', { ascending: false })
         .limit(limit);
       
-      return (data || []).map(n => ({ id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read }));
+      let filtered = data || [];
+      
+      // Filtrage post-requête pour la précision délégué/classe
+      if (role === 'DELEGATE') {
+        filtered = filtered.filter(n => 
+            n.target_class === 'Général' || 
+            n.target_class === className || 
+            n.user_id === user.id
+        );
+      }
+
+      return filtered.map(n => ({ 
+        id: n.id, 
+        title: n.title, 
+        message: n.message, 
+        type: n.type as any, 
+        timestamp: n.created_at, 
+        isRead: n.is_read,
+        link: n.link 
+      }));
     },
     markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
-    add: async (notif: any) => {
+    add: async (notif: Partial<AppNotification> & { targetRole?: string, targetClass?: string }) => {
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('notifications').insert({
-        title: notif.title, message: notif.message, type: notif.type,
-        user_id: user?.id, target_class: notif.targetClass || 'Général', is_read: false
+        title: notif.title, 
+        message: notif.message, 
+        type: notif.type || 'info',
+        user_id: user?.id, 
+        target_class: notif.targetClass || 'Général',
+        target_role: notif.targetRole,
+        link: notif.link,
+        is_read: false
       });
     },
     markAllRead: async () => {
@@ -369,7 +437,6 @@ export const API = {
       invalidateCache('meet_list');
       return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
     },
-    // Fixed: Added missing update method
     update: async (id: string, m: any) => {
       const { data, error } = await supabase.from('meet_links').update({
         title: m.title, platform: m.platform, url: m.url, time: m.time

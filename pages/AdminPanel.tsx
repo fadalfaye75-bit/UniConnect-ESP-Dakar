@@ -6,7 +6,7 @@ import { API } from '../services/api';
 import { 
   Users, BookOpen, UserPlus, Search, Loader2, School, 
   Plus, Trash2, LayoutDashboard, Shield, 
-  Ban, CheckCircle, PenSquare, Activity, Copy, Save, AlertCircle, Info
+  Ban, CheckCircle, PenSquare, Activity, Copy, Save, AlertCircle, Info, Filter
 } from 'lucide-react';
 import { UserRole, ClassGroup, ActivityLog, User } from '../types';
 import Modal from '../components/Modal';
@@ -24,6 +24,7 @@ export default function AdminPanel() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string>('ALL');
   
   // Modals
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -93,7 +94,6 @@ export default function AdminPanel() {
 
     setSubmitting(true);
     try {
-      // Fix: Removed adminName as the API method now only takes the user object
       await API.auth.createUser({
         name: newUser.fullName,
         email: newUser.email,
@@ -102,7 +102,6 @@ export default function AdminPanel() {
         schoolName: newUser.schoolName
       });
       
-      // On rafraîchit les données après la création
       await fetchGlobalData();
       
       setIsUserModalOpen(false);
@@ -125,7 +124,6 @@ export default function AdminPanel() {
     if (!editingUser) return;
     setSubmitting(true);
     try {
-      // Fix: Removed third argument as updateProfile expects only 2 arguments (id, updates)
       await API.auth.updateProfile(editingUser.id, editingUser);
       await fetchGlobalData();
       setIsEditModalOpen(false);
@@ -144,7 +142,6 @@ export default function AdminPanel() {
 
   const handleToggleStatus = async (userId: string) => {
       try {
-          // Fix: Removed unused adminName argument as toggleUserStatus now only takes userId
           await API.auth.toggleUserStatus(userId);
           fetchGlobalData();
           addNotification({ title: 'Succès', message: 'Statut mis à jour.', type: 'info' });
@@ -156,7 +153,6 @@ export default function AdminPanel() {
   const handleDeleteUser = async (userId: string) => {
       if(!window.confirm("Supprimer définitivement cet utilisateur ?")) return;
       try {
-          // Fix: Removed extra adminName argument as deleteUser expects only 1 argument (userId)
           await API.auth.deleteUser(userId);
           fetchGlobalData();
           addNotification({ title: 'Succès', message: 'Utilisateur supprimé.', type: 'info' });
@@ -182,10 +178,8 @@ export default function AdminPanel() {
       setSubmitting(true);
       try {
           if(isEditClassMode) {
-              // Fix: Removed extra adminName argument as API.classes.update expects 2 arguments
               await API.classes.update(classFormData.id, { name: classFormData.name, email: classFormData.email });
           } else {
-              // Fix: Removed extra adminName argument as API.classes.create expects 2 arguments
               await API.classes.create(classFormData.name, classFormData.email);
           }
           await fetchGlobalData();
@@ -196,11 +190,28 @@ export default function AdminPanel() {
       } finally { setSubmitting(false); }
   };
 
-  const filteredUsers = useMemo(() => users.filter(u => 
-    (u.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-    (u.email?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-    (u.className?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-  ), [users, searchTerm]);
+  const handleDeleteClass = async (id: string, name: string) => {
+    if (!window.confirm(`Voulez-vous vraiment supprimer la classe "${name}" ? Cette action peut impacter l'accès des étudiants associés.`)) return;
+    try {
+        await API.classes.delete(id);
+        await fetchGlobalData();
+        addNotification({ title: 'Succès', message: 'Classe supprimée avec succès.', type: 'info' });
+    } catch (error: any) {
+        addNotification({ title: 'Erreur', message: error?.message || "Impossible de supprimer la classe.", type: 'alert' });
+    }
+  };
+
+  const filteredUsers = useMemo(() => {
+    return users.filter(u => {
+      const matchesSearch = (u.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (u.email?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+        (u.className?.toLowerCase() || '').includes(searchTerm.toLowerCase());
+      
+      const matchesRole = roleFilter === 'ALL' || u.role === roleFilter;
+      
+      return matchesSearch && matchesRole;
+    });
+  }, [users, searchTerm, roleFilter]);
 
   return (
     <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-140px)] animate-fade-in">
@@ -218,7 +229,7 @@ export default function AdminPanel() {
                  ].map((tab) => (
                     <button 
                         key={tab.id}
-                        onClick={() => { setActiveTab(tab.id as TabType); setSearchTerm(''); }} 
+                        onClick={() => { setActiveTab(tab.id as TabType); setSearchTerm(''); setRoleFilter('ALL'); }} 
                         className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all ${activeTab === tab.id ? 'bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
                     >
                         <tab.icon size={18} /> {tab.label}
@@ -231,7 +242,7 @@ export default function AdminPanel() {
                  <Shield size={18} className="text-primary-200" />
                  <span className="font-bold text-xs uppercase">Sécurité Active</span>
              </div>
-             <p className="text-[10px] opacity-80 leading-relaxed">MDP par défaut : <strong>passer25</strong>.<br/>Note : Pensez à désactiver 'Confirm Email' dans Supabase.</p>
+             <p className="text-[10px] opacity-80 leading-relaxed">MDP par défaut : <strong>passer25</strong>.<br/>Note : Pensez à désactiver 'Confirm Email' dans Supabase Auth.</p>
          </div>
       </div>
 
@@ -298,12 +309,27 @@ export default function AdminPanel() {
                 
                 {activeTab === 'users' && (
                     <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 overflow-hidden">
-                        <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50/50 dark:bg-gray-800">
-                            <div className="relative w-full md:w-80">
-                                <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                                <input type="text" placeholder="Recherche nom, mail..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 rounded-lg text-sm outline-none" />
+                        <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex flex-col lg:flex-row justify-between items-center gap-4 bg-gray-50/50 dark:bg-gray-800">
+                            <div className="flex flex-col sm:flex-row gap-3 w-full lg:flex-1">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+                                    <input type="text" placeholder="Recherche nom, mail..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 rounded-lg text-sm outline-none transition-all focus:ring-2 focus:ring-primary-100" />
+                                </div>
+                                <div className="relative">
+                                    <Filter className="absolute left-3 top-2.5 text-gray-400 pointer-events-none" size={16} />
+                                    <select 
+                                        value={roleFilter} 
+                                        onChange={e => setRoleFilter(e.target.value)}
+                                        className="pl-10 pr-8 py-2 bg-white dark:bg-gray-700 border border-gray-200 rounded-lg text-sm outline-none font-bold text-gray-600 dark:text-gray-300 appearance-none transition-all focus:ring-2 focus:ring-primary-100 cursor-pointer"
+                                    >
+                                        <option value="ALL">Tous les rôles</option>
+                                        <option value={UserRole.STUDENT}>Étudiants</option>
+                                        <option value={UserRole.DELEGATE}>Délégués</option>
+                                        <option value={UserRole.ADMIN}>Administrateurs</option>
+                                    </select>
+                                </div>
                             </div>
-                            <button onClick={() => setIsUserModalOpen(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5">
+                            <button onClick={() => setIsUserModalOpen(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-primary-500/20 transition-all hover:-translate-y-0.5 whitespace-nowrap">
                                 <UserPlus size={18} /> Créer un compte
                             </button>
                         </div>
@@ -311,7 +337,7 @@ export default function AdminPanel() {
                             <table className="w-full text-left text-sm">
                                 <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 text-[10px] font-bold uppercase tracking-wider">
                                     <tr>
-                                        <th className="px-6 py-4">Utilisateur</th>
+                                        <th className="px-6 py-4">Utilisateur ({filteredUsers.length})</th>
                                         <th className="px-6 py-4">Rôle</th>
                                         <th className="px-6 py-4">Classe</th>
                                         <th className="px-6 py-4 text-right">Actions</th>
@@ -374,7 +400,7 @@ export default function AdminPanel() {
                                 <div key={cls.id} className="p-4 bg-gray-50 dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 group relative">
                                     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button onClick={() => openClassModal(cls)} className="p-1.5 text-gray-400 hover:text-blue-500"><PenSquare size={14} /></button>
-                                        <button onClick={() => API.classes.delete(cls.id).then(fetchGlobalData)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                                        <button onClick={() => handleDeleteClass(cls.id, cls.name)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
                                     </div>
                                     <h4 className="font-bold text-gray-900 dark:text-white">{cls.name}</h4>
                                     <p className="text-xs text-gray-400 mt-1">{cls.email || 'Pas d\'email collectif'}</p>
