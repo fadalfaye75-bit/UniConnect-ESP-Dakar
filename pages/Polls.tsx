@@ -49,9 +49,16 @@ export default function Polls() {
 
   useEffect(() => {
     fetchPolls(true);
-    const interval = setInterval(() => fetchPolls(false), 120000); 
-    return () => clearInterval(interval);
-  }, [fetchPolls, user, adminViewClass]);
+    
+    // Souscription temps réel pour les sondages et les votes
+    const subscription = API.polls.subscribe(() => {
+      fetchPolls(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [fetchPolls]);
 
   const displayedPolls = useMemo(() => {
     return polls.filter(poll => {
@@ -101,7 +108,6 @@ export default function Polls() {
       await API.polls.vote(pollId, optionId);
       const msg = hasAlreadyVoted ? 'Votre vote a été mis à jour.' : 'Merci pour votre participation.';
       addNotification({ title: 'Vote enregistré', message: msg, type: 'success' });
-      fetchPolls(false);
     } catch (error: any) {
       addNotification({ title: 'Erreur', message: 'Impossible d\'enregistrer votre vote.', type: 'alert' });
     }
@@ -110,7 +116,6 @@ export default function Polls() {
   const handleToggleStatus = async (poll: Poll) => {
     try {
       await API.polls.toggleStatus(poll.id);
-      fetchPolls(false);
       addNotification({ title: 'Statut mis à jour', message: poll.isActive ? 'Sondage fermé.' : 'Sondage ouvert.', type: 'info' });
     } catch (error) {
        addNotification({ title: 'Erreur', message: 'Action impossible.', type: 'alert' });
@@ -129,7 +134,6 @@ export default function Polls() {
     if (!window.confirm('Supprimer ce sondage ?')) return;
     try {
       await API.polls.delete(id);
-      setPolls(prev => prev.filter(p => p.id !== id));
       addNotification({ title: 'Supprimé', message: 'Le sondage a été retiré.', type: 'info' });
     } catch (error) {
       addNotification({ title: 'Erreur', message: 'Action échouée.', type: 'alert' });
@@ -178,7 +182,6 @@ export default function Polls() {
         await API.polls.create(payload);
         addNotification({ title: 'Sondage lancé', message: 'Les étudiants peuvent maintenant voter.', type: 'success' });
       }
-      await fetchPolls(false);
       setIsModalOpen(false);
       setEditingId(null);
     } catch (error: any) {
@@ -205,7 +208,7 @@ export default function Polls() {
   if (loading) return <div className="flex justify-center items-center h-[calc(100vh-200px)]"><Loader2 className="animate-spin text-primary-400" size={48} /></div>;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-center justify-between sticky top-0 bg-gray-50/95 dark:bg-gray-900/95 py-4 z-20 backdrop-blur-sm gap-4">
         <div>
            <h2 className="text-3xl font-bold text-gray-800 dark:text-white tracking-tight flex items-center gap-3">
@@ -222,13 +225,13 @@ export default function Polls() {
                 placeholder="Chercher une question..." 
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500 transition-all"
              />
            </div>
            <select 
              value={statusFilter}
              onChange={e => setStatusFilter(e.target.value as any)}
-             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-600 dark:text-gray-300 outline-none cursor-pointer"
+             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-600 dark:text-gray-300 outline-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
            >
               <option value="all">Sondages (Tous)</option>
               <option value="active">Actifs</option>
@@ -237,19 +240,19 @@ export default function Polls() {
         </div>
 
         {canManage && (
-          <button onClick={openNewModal} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 transition-all text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-primary-500/20 whitespace-nowrap">
+          <button onClick={openNewModal} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 transition-all text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-primary-500/20 whitespace-nowrap active:scale-95">
             <Plus size={18} /> <span className="hidden sm:inline">Nouveau Sondage</span>
           </button>
         )}
       </div>
 
       {canManage && displayedPolls.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-top-4 fade-in duration-500">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-top-4 fade-in duration-500">
            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
               <div className="flex items-start justify-between">
                  <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Participation Totale</p>
-                    <h3 className="text-3xl font-bold text-gray-900 dark:text-white mt-2">{dashboardStats.totalVotes}</h3>
+                    <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-2 tracking-tight">{dashboardStats.totalVotes}</h3>
                  </div>
                  <div className="p-3 bg-blue-50 text-blue-500 dark:bg-blue-900/20 rounded-xl"><Users size={24} /></div>
               </div>
@@ -258,16 +261,16 @@ export default function Polls() {
               <div className="flex items-start justify-between">
                  <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Sondages Actifs</p>
-                    <h3 className="text-3xl font-bold text-gray-900 dark:text-white mt-2">{dashboardStats.activePolls}</h3>
+                    <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-2 tracking-tight">{dashboardStats.activePolls}</h3>
                  </div>
                  <div className="p-3 bg-green-50 text-green-500 dark:bg-green-900/20 rounded-xl"><Activity size={24} /></div>
               </div>
            </div>
-           <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+           <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 sm:col-span-2 lg:col-span-1 flex flex-col justify-between">
               <div className="flex items-start justify-between">
                  <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-wide">Moyenne Votes</p>
-                    <h3 className="text-3xl font-bold text-gray-900 dark:text-white mt-2">{dashboardStats.avgVotes}</h3>
+                    <h3 className="text-3xl font-black text-gray-900 dark:text-white mt-2 tracking-tight">{dashboardStats.avgVotes}</h3>
                  </div>
                  <div className="p-3 bg-purple-50 text-purple-500 dark:bg-purple-900/20 rounded-xl"><BarChart2 size={24} /></div>
               </div>
@@ -302,21 +305,21 @@ export default function Polls() {
                    </div>
                 </div>
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2 leading-tight pr-8">{poll.question}</h3>
-                <div className="space-y-3 flex-1">
+                <div className="space-y-3 flex-1 mt-4">
                   {poll.options.map(option => {
                     const percentage = totalVotes > 0 ? Math.round((option.votes / totalVotes) * 100) : 0;
                     const isSelected = poll.userVoteOptionId === option.id;
                     const showResults = poll.hasVoted || status === 'ended' || (canManage && status !== 'active');
                     const canVote = status === 'active';
                     return (
-                      <button key={option.id} onClick={() => canVote && handleVote(poll.id, option.id, status, poll.hasVoted)} disabled={!canVote} className={`relative w-full text-left rounded-xl overflow-hidden transition-all h-12 ${canVote ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'} ${isSelected ? 'ring-2 ring-primary-400 shadow-sm' : 'border border-gray-200 dark:border-gray-700'}`}>
-                         {showResults && <div className={`absolute left-0 top-0 bottom-0 transition-all duration-1000 ${isSelected ? 'bg-primary-100 dark:bg-primary-900/40' : 'bg-gray-100 dark:bg-gray-700/50'}`} style={{ width: `${percentage}%` }} />}
+                      <button key={option.id} onClick={() => canVote && handleVote(poll.id, option.id, status, poll.hasVoted)} disabled={!canVote} className={`relative w-full text-left rounded-xl overflow-hidden transition-all h-12 ${canVote ? 'cursor-pointer hover:shadow-sm active:scale-[0.98]' : 'cursor-default'} ${isSelected ? 'ring-2 ring-primary-400 shadow-sm' : 'border border-gray-100 dark:border-gray-700'}`}>
+                         {showResults && <div className={`absolute left-0 top-0 bottom-0 transition-all duration-1000 ease-out ${isSelected ? 'bg-primary-100 dark:bg-primary-900/40' : 'bg-gray-50 dark:bg-gray-700/50'}`} style={{ width: `${percentage}%` }} />}
                          <div className="absolute inset-0 px-4 flex justify-between items-center z-10">
                               <div className="flex items-center gap-3">
-                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isSelected ? 'border-primary-500 bg-primary-500 text-white' : 'border-gray-300 bg-transparent'}`}>{isSelected && <Check size={12} strokeWidth={4} />}</div>
+                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'border-primary-500 bg-primary-500 text-white' : 'border-gray-300 dark:border-gray-600 bg-transparent'}`}>{isSelected && <Check size={12} strokeWidth={4} />}</div>
                                  <span className={`font-medium text-sm truncate ${isSelected ? 'text-primary-900 dark:text-white font-bold' : 'text-gray-700 dark:text-gray-300'}`}>{option.label}</span>
                               </div>
-                              {showResults && <span className={`font-bold text-sm ${isSelected ? 'text-primary-700 dark:text-primary-300' : 'text-gray-500 dark:text-gray-400'}`}>{percentage}%</span>}
+                              {showResults && <span className={`font-black text-sm ${isSelected ? 'text-primary-700 dark:text-primary-300' : 'text-gray-500 dark:text-gray-400'}`}>{percentage}%</span>}
                          </div>
                       </button>
                     );
@@ -325,7 +328,7 @@ export default function Polls() {
                 <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 text-xs font-medium text-gray-500 items-center justify-between">
                     <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md"><BarChart2 size={14} /><span className="text-gray-700 dark:text-gray-300 font-bold">{totalVotes}</span> votes</div>
-                        {(poll.hasVoted || status === 'ended' || canManage) && <button onClick={() => openResults(poll)} className="flex items-center gap-1.5 text-primary-600 font-bold"><PieChartIcon size={14} /> Résultats</button>}
+                        {(poll.hasVoted || status === 'ended' || canManage) && <button onClick={() => openResults(poll)} className="flex items-center gap-1.5 text-primary-600 dark:text-primary-400 font-bold hover:underline"><PieChartIcon size={14} /> Résultats</button>}
                     </div>
                 </div>
               </div>
@@ -341,24 +344,24 @@ export default function Polls() {
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingId ? "Modifier le sondage" : "Nouveau sondage"}>
         <form onSubmit={handleSubmit} className="space-y-5">
-           <div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Question</label><input required type="text" value={question} onChange={e => setQuestion(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:bg-gray-700 outline-none" placeholder="Ex: Date de l'examen ?" /></div>
+           <div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Question</label><input required type="text" value={question} onChange={e => setQuestion(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 dark:bg-gray-700 outline-none focus:ring-4 focus:ring-primary-100 dark:focus:ring-primary-900/20" placeholder="Ex: Date de l'examen ?" /></div>
            <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-700/30 p-4 rounded-xl">
-              <div><label className="block text-xs font-bold text-gray-500 mb-1.5">Début</label><input type="datetime-local" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:bg-gray-700 text-xs" /></div>
-              <div><label className="block text-xs font-bold text-gray-500 mb-1.5">Fin</label><input type="datetime-local" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:bg-gray-700 text-xs" /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1.5">Début</label><input type="datetime-local" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 dark:bg-gray-700 text-xs" /></div>
+              <div><label className="block text-xs font-bold text-gray-500 mb-1.5">Fin</label><input type="datetime-local" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 dark:bg-gray-700 text-xs" /></div>
            </div>
            <div>
               <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Options</label>
               <div className="space-y-2">
                  {options.map((opt, idx) => (
                    <div key={idx} className="flex gap-2 relative">
-                      <input type="text" required value={opt} onChange={e => handleOptionChange(idx, e.target.value)} placeholder={`Choix ${idx + 1}`} className="flex-1 pl-4 pr-4 py-2.5 rounded-xl border border-gray-300 dark:bg-gray-700 outline-none" />
-                      {options.length > 2 && <button type="button" onClick={() => removeOption(idx)} className="text-red-500"><X size={20} /></button>}
+                      <input type="text" required value={opt} onChange={e => handleOptionChange(idx, e.target.value)} placeholder={`Choix ${idx + 1}`} className="flex-1 pl-4 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 dark:bg-gray-700 outline-none" />
+                      {options.length > 2 && <button type="button" onClick={() => removeOption(idx)} className="text-red-500 p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><X size={20} /></button>}
                    </div>
                  ))}
               </div>
-              <button type="button" onClick={addOption} className="mt-3 text-sm font-bold text-primary-600 flex items-center gap-1"><Plus size={16} /> Ajouter une option</button>
+              <button type="button" onClick={addOption} className="mt-3 text-sm font-bold text-primary-600 dark:text-primary-400 flex items-center gap-1 hover:underline transition-all px-2 py-1"><Plus size={16} /> Ajouter une option</button>
            </div>
-           <button type="submit" disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition-all flex justify-center items-center gap-2">{submitting ? <Loader2 className="animate-spin" size={18} /> : (editingId ? 'Mettre à jour' : 'Lancer')}</button>
+           <button type="submit" disabled={submitting} className="w-full bg-primary-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-primary-500/20 transition-all flex justify-center items-center gap-2 hover:bg-primary-600 disabled:opacity-50">{submitting ? <Loader2 className="animate-spin" size={18} /> : (editingId ? 'Mettre à jour' : 'Lancer')}</button>
         </form>
       </Modal>
 
@@ -376,7 +379,7 @@ export default function Polls() {
                     <PieChart><Pie data={selectedPollForResults.options} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={5} dataKey="votes" nameKey="label" animationDuration={1000}>{selectedPollForResults.options.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart>
                 </ResponsiveContainer>
              </div>
-             <button onClick={() => setIsResultsModalOpen(false)} className="w-full py-3 bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold rounded-xl">Fermer</button>
+             <button onClick={() => setIsResultsModalOpen(false)} className="w-full py-3 bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold rounded-xl active:scale-95 transition-all">Fermer</button>
           </div>
         )}
       </Modal>

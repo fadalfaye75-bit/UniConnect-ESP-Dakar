@@ -1,93 +1,81 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API } from '../services/api';
 import { 
   Plus, Share2, Copy, Trash2, Loader2, Pencil, 
-  Megaphone, AlertTriangle, Info, Pin, 
-  Link as LinkIcon, ExternalLink, Bold, Italic, List, Paperclip, X, Upload, Circle, FileText, Download, Sparkles, Search, Filter
+  Megaphone, Search, Filter, ChevronDown, Sparkles
 } from 'lucide-react';
-import { UserRole, Announcement, AnnouncementPriority, ExternalLink as LinkType } from '../types';
+import { UserRole, Announcement, AnnouncementPriority } from '../types';
 import Modal from '../components/Modal';
 import { useNotification } from '../context/NotificationContext';
 
-const formatContent = (text: any) => {
-    if (!text || typeof text !== 'string') return null;
-    return text.split('\n').map((line, i) => {
-        const trimmedLine = line.trim();
-        if (!trimmedLine) return <br key={`br-${i}`} />;
-        if (trimmedLine.startsWith('- ')) {
-            return (
-              <li key={`li-${i}`} className="ml-4 list-disc marker:text-gray-400">
-                {trimmedLine.replace('- ', '')}
-              </li>
-            );
-        }
-        const parts = trimmedLine.split(/(\*.*?\*|_.*?_)/g).map((part, j) => {
-            if (!part) return "";
-            if (part.startsWith('*') && part.endsWith('*')) {
-                return <strong key={`bold-${j}`} className="font-bold">{part.slice(1, -1)}</strong>;
-            }
-            if (part.startsWith('_') && part.endsWith('_')) {
-                return <em key={`italic-${j}`} className="italic">{part.slice(1, -1)}</em>;
-            }
-            return part;
-        });
-        return <p key={`p-${i}`} className="mb-1">{parts}</p>;
-    });
-};
+const PAGE_SIZE = 15;
 
 export default function Announcements() {
   const { user, adminViewClass } = useAuth();
   const { addNotification } = useNotification();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   
-  // Filtres
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
-
   const [readIds, setReadIds] = useState<string[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ 
-    title: '', 
-    content: '', 
-    priority: 'normal' as AnnouncementPriority,
-    attachments: [] as string[]
-  });
 
-  const canManage = user?.role === UserRole.ADMIN || user?.role === UserRole.DELEGATE;
+  const fetchAnnouncements = useCallback(async (pageNum: number, isRefresh = false) => {
+    try {
+      if (isRefresh) {
+          setLoading(true);
+          setPage(0);
+      } else {
+          setLoadingMore(true);
+      }
+      
+      const data = await API.announcements.list(pageNum, PAGE_SIZE);
+      
+      if (isRefresh) {
+          setAnnouncements(data);
+      } else {
+          setAnnouncements(prev => [...prev, ...data]);
+      }
+      
+      setHasMore(data.length === PAGE_SIZE);
+    } catch (error) {
+      addNotification({ title: 'Erreur', message: 'Chargement échoué.', type: 'alert' });
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [addNotification]);
 
   useEffect(() => {
-    fetchAnnouncements();
+    fetchAnnouncements(0, true);
+    
+    const subscription = API.announcements.subscribe(() => {
+        fetchAnnouncements(0, true);
+    });
+
     if (user) {
         const storedReads = localStorage.getItem(`uniconnect_read_anns_${user.id}`);
         if (storedReads) {
             try { setReadIds(JSON.parse(storedReads)); } catch(e) {}
         }
     }
-  }, [user, adminViewClass]);
 
-  const fetchAnnouncements = async () => {
-    try {
-      setLoading(true);
-      const data = await API.announcements.list();
-      setAnnouncements(data);
-    } catch (error) {
-      addNotification({ title: 'Erreur', message: 'Chargement échoué.', type: 'alert' });
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => {
+        subscription.unsubscribe();
+    };
+  }, [user, adminViewClass, fetchAnnouncements]);
 
-  const handleMarkAsRead = (id: string) => {
-      if (user?.role === UserRole.STUDENT && !readIds.includes(id)) {
-          const newIds = [...readIds, id];
-          setReadIds(newIds);
-          localStorage.setItem(`uniconnect_read_anns_${user.id}`, JSON.stringify(newIds));
-      }
+  const loadMore = () => {
+      const nextPage = page + 1;
+      setPage(nextPage);
+      fetchAnnouncements(nextPage);
   };
 
   const displayedAnnouncements = useMemo(() => {
@@ -97,8 +85,7 @@ export default function Announcements() {
         : (ann.className === user?.className || ann.className === 'Général');
       
       const matchesSearch = ann.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          ann.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          ann.author.toLowerCase().includes(searchTerm.toLowerCase());
+                          ann.content.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesPriority = priorityFilter === 'all' || ann.priority === priorityFilter;
 
@@ -106,96 +93,18 @@ export default function Announcements() {
     });
   }, [user, adminViewClass, announcements, searchTerm, priorityFilter]);
 
-  const handleCopy = (e: React.MouseEvent, text: string) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(text).then(() => {
-      addNotification({ title: 'Copié', message: 'Contenu copié.', type: 'success' });
-    });
-  };
-
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (!window.confirm('Supprimer cette annonce ?')) return;
-    try {
-      await API.announcements.delete(id);
-      setAnnouncements(prev => prev.filter(a => a.id !== id));
-      addNotification({ title: 'Supprimé', message: 'Annonce retirée.', type: 'info' });
-    } catch (error) {
-      addNotification({ title: 'Erreur', message: 'Action impossible.', type: 'alert' });
+  const handleMarkAsRead = (id: string) => {
+    if (user?.role === UserRole.STUDENT && !readIds.includes(id)) {
+        const newIds = [...readIds, id];
+        setReadIds(newIds);
+        localStorage.setItem(`uniconnect_read_anns_${user.id}`, JSON.stringify(newIds));
     }
-  };
-
-  const openNewModal = () => {
-    setEditingId(null);
-    setFormData({ title: '', content: '', priority: 'normal', attachments: [] });
-    setIsModalOpen(true);
-  };
-
-  const handleEdit = (e: React.MouseEvent, ann: Announcement) => {
-    e.stopPropagation();
-    setEditingId(ann.id);
-    setFormData({ 
-        title: ann.title, 
-        content: ann.content, 
-        priority: ann.priority,
-        attachments: ann.attachments || [] 
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleAddAttachment = () => {
-    const url = window.prompt("Lien vers la pièce jointe (PDF, Image, etc.) :");
-    if (url && url.startsWith('http')) {
-        setFormData(prev => ({...prev, attachments: [...prev.attachments, url]}));
-    }
-  };
-
-  const handleRemoveAttachment = (idx: number) => {
-      setFormData(prev => ({...prev, attachments: prev.attachments.filter((_, i) => i !== idx)}));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || 'Général');
-      const payload = { title: formData.title, content: formData.content, priority: formData.priority, className: targetClass, attachments: formData.attachments };
-      if (editingId) {
-        const updatedAnn = await API.announcements.update(editingId, payload);
-        setAnnouncements(prev => prev.map(a => a.id === editingId ? updatedAnn : a));
-      } else {
-        const newAnn = await API.announcements.create(payload);
-        setAnnouncements(prev => [newAnn, ...prev]);
-      }
-      setIsModalOpen(false);
-      addNotification({ title: 'Succès', message: 'Opération réussie.', type: 'success' });
-    } catch (error: any) {
-      addNotification({ title: 'Erreur', message: 'Action échouée.', type: 'alert' });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const getPriorityStyle = (priority: AnnouncementPriority, isUnread: boolean) => {
-      if (isUnread) {
-          switch(priority) {
-              case 'urgent': return 'border-red-500 bg-red-50 dark:bg-red-900/20 dark:border-red-400';
-              case 'important': return 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 dark:border-yellow-400';
-              default: return 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400';
-          }
-      }
-      switch(priority) {
-          case 'urgent': return 'border-red-200 bg-white dark:bg-gray-800 dark:border-red-900/30';
-          case 'important': return 'border-yellow-200 bg-white dark:bg-gray-800 dark:border-yellow-900/30';
-          default: return 'border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700';
-      }
   };
 
   if (loading) return <div className="flex justify-center h-64 items-center"><Loader2 className="animate-spin text-primary-500" size={32} /></div>;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6 pb-20">
       <div className="flex flex-col md:flex-row md:items-center justify-between sticky top-0 z-10 bg-gray-50/95 dark:bg-gray-900/95 py-4 backdrop-blur-sm gap-4">
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
           <Megaphone className="text-primary-500" size={24} /> Avis & Annonces
@@ -209,13 +118,13 @@ export default function Announcements() {
                 placeholder="Chercher une annonce..." 
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500 transition-all"
              />
            </div>
            <select 
              value={priorityFilter}
              onChange={e => setPriorityFilter(e.target.value)}
-             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-600 dark:text-gray-300 outline-none cursor-pointer"
+             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-600 dark:text-gray-300 outline-none"
            >
               <option value="all">Priorité (Toutes)</option>
               <option value="normal">Normal</option>
@@ -223,121 +132,54 @@ export default function Announcements() {
               <option value="urgent">Urgent</option>
            </select>
         </div>
-
-        {canManage && (
-          <button onClick={openNewModal} className="bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-primary-500/20 whitespace-nowrap">
-            <Plus size={18} /> <span className="hidden sm:inline">Nouvelle annonce</span>
-          </button>
-        )}
       </div>
 
       <div className="space-y-4">
-        {displayedAnnouncements.length === 0 ? (
-          <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700">
-            <Search size={40} className="mx-auto text-gray-300 mb-3" />
-            <h3 className="text-lg font-bold text-gray-400">Aucune annonce trouvée</h3>
-            <p className="text-sm text-gray-400">Essayez de modifier vos filtres.</p>
-          </div>
-        ) : (
-          displayedAnnouncements.map((ann) => {
-            const isUnread = user?.role === UserRole.STUDENT && !readIds.includes(ann.id);
-            return (
-              <div 
-                key={ann.id} 
-                onClick={() => handleMarkAsRead(ann.id)}
-                className={`relative rounded-2xl border shadow-sm p-6 group transition-all duration-300 ${getPriorityStyle(ann.priority, isUnread)} ${isUnread ? 'ring-2 ring-primary-500/20 shadow-lg scale-[1.01]' : 'opacity-90 hover:opacity-100'}`}
-              >
-                {isUnread && (
-                    <div className="absolute -top-3 -right-2 bg-primary-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg shadow-xl animate-bounce flex items-center gap-1">
-                        <Sparkles size={10} /> Nouveau
-                    </div>
-                )}
-                <div className="flex justify-between items-start mb-4">
-                   <div className="flex items-center gap-3">
-                       <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-colors ${isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
-                           {ann.author.charAt(0)}
-                       </div>
-                       <div>
-                           <div className="flex items-center gap-2">
-                              {user?.role === UserRole.STUDENT && (
-                                <div className={`w-2.5 h-2.5 rounded-full shadow-sm transition-all duration-500 ${isUnread ? 'bg-primary-500 animate-pulse scale-125' : 'bg-gray-300 dark:bg-gray-600'}`} />
-                              )}
-                              <span className={`text-sm transition-colors ${isUnread ? 'font-black text-gray-900 dark:text-white' : 'font-bold text-gray-600 dark:text-gray-400'}`}>
-                                {ann.author}
-                              </span>
-                              <span className={`text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded transition-colors ${isUnread ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30' : 'text-gray-400'}`}>
-                                {ann.priority}
-                              </span>
-                           </div>
-                           <div className="text-[10px] text-gray-500 font-medium">{new Date(ann.date).toLocaleDateString()} • {ann.className}</div>
-                       </div>
-                   </div>
-                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={(e) => handleCopy(e, ann.content)} className="p-1.5 text-gray-400 hover:text-primary-500"><Copy size={14} /></button>
-                      {canManage && (
-                          <>
-                              <button onClick={(e) => handleEdit(e, ann)} className="p-1.5 text-gray-400 hover:text-blue-500"><Pencil size={14} /></button>
-                              <button onClick={(e) => handleDelete(e, ann.id)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
-                          </>
-                      )}
-                   </div>
-                </div>
-                <h3 className={`text-xl mb-2 flex items-center gap-2 transition-all ${isUnread ? 'font-black text-gray-900 dark:text-white tracking-tight' : 'font-bold text-gray-700 dark:text-gray-300'}`}>
-                   {ann.title}
-                </h3>
-                <div className={`text-sm whitespace-pre-wrap mb-4 transition-colors leading-relaxed ${isUnread ? 'text-gray-800 dark:text-gray-100 font-medium' : 'text-gray-600 dark:text-gray-400'}`}>
-                    {formatContent(ann.content)}
-                </div>
-                {ann.attachments && ann.attachments.length > 0 && (
-                  <div className={`mt-4 pt-4 border-t transition-colors ${isUnread ? 'border-primary-100 dark:border-primary-800' : 'border-gray-100 dark:border-gray-700'}`}>
-                    <p className={`text-[10px] font-black uppercase mb-2 tracking-widest ${isUnread ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400'}`}>Documents joints</p>
-                    <div className="flex flex-wrap gap-2">
-                      {ann.attachments.map((url, idx) => (
-                        <a key={idx} href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${isUnread ? 'bg-white dark:bg-gray-800 border-primary-200 dark:border-primary-700 hover:border-primary-400 hover:shadow-sm' : 'bg-gray-50 dark:bg-gray-700/50 border-gray-100 dark:border-gray-600 hover:bg-gray-100'}`}>
-                          <FileText size={14} className="text-primary-500" />
-                          <span className="truncate max-w-[150px]">Fichier {idx + 1}</span>
-                          <Download size={12} className="text-gray-400" />
-                        </a>
-                      ))}
-                    </div>
+        {displayedAnnouncements.map((ann) => {
+          const isUnread = user?.role === UserRole.STUDENT && !readIds.includes(ann.id);
+          return (
+            <div 
+              key={ann.id} 
+              onClick={() => handleMarkAsRead(ann.id)}
+              className={`relative rounded-2xl border shadow-sm p-6 transition-all duration-300 ${isUnread ? 'bg-white dark:bg-gray-800 border-primary-400 shadow-md' : 'bg-gray-50/50 dark:bg-gray-900 border-gray-100 dark:border-gray-800'}`}
+            >
+              {isUnread && (
+                  <div className="absolute -top-2 -right-2 bg-primary-600 text-white text-[9px] font-black uppercase px-2 py-1 rounded-lg shadow-lg flex items-center gap-1">
+                      <Sparkles size={10} /> Nouveau
                   </div>
-                )}
+              )}
+              <div className="flex justify-between items-start mb-2">
+                 <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{ann.author}</span>
+                    <span className="text-gray-300">•</span>
+                    <span className="text-[10px] text-gray-400 font-bold">{new Date(ann.date).toLocaleDateString()}</span>
+                 </div>
+                 <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border ${
+                    ann.priority === 'urgent' ? 'bg-red-50 text-red-600 border-red-100 dark:bg-red-900/30' : 
+                    ann.priority === 'important' ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-gray-50 text-gray-400'
+                 }`}>
+                    {ann.priority}
+                 </span>
               </div>
-            );
-          })
-        )}
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">{ann.title}</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-wrap">{ann.content}</p>
+            </div>
+          );
+        })}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingId ? "Modifier" : "Nouvelle Annonce"}>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input type="text" required value={formData.title} placeholder="Titre" onChange={e => setFormData({...formData, title: e.target.value})} className="w-full px-4 py-2 rounded-xl border dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500" />
-          <div className="grid grid-cols-3 gap-2">
-              {['normal', 'important', 'urgent'].map(p => (
-                  <button key={p} type="button" onClick={() => setFormData({...formData, priority: p as any})} className={`py-2 rounded-lg text-xs font-bold border capitalize transition-colors ${formData.priority === p ? 'bg-primary-50 border-primary-500 text-primary-600 dark:bg-primary-900/40 dark:text-primary-300' : 'bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'}`}>
-                    {p}
-                  </button>
-              ))}
+      {hasMore && (
+          <div className="flex justify-center pt-8">
+              <button 
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="flex items-center gap-2 px-8 py-3 bg-white dark:bg-gray-800 text-primary-600 dark:text-primary-400 font-bold rounded-2xl border border-primary-100 dark:border-primary-800 shadow-soft hover:shadow-xl transition-all disabled:opacity-50"
+              >
+                {loadingMore ? <Loader2 className="animate-spin" size={20} /> : <ChevronDown size={20} />}
+                {loadingMore ? 'Chargement...' : 'Charger plus d\'annonces'}
+              </button>
           </div>
-          <textarea required rows={5} value={formData.content} placeholder="Message..." onChange={e => setFormData({...formData, content: e.target.value})} className="w-full px-4 py-3 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-500" />
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Pièces jointes</label>
-              <button type="button" onClick={handleAddAttachment} className="text-xs text-primary-600 font-bold hover:underline flex items-center gap-1"><Plus size={14} /> Ajouter un lien</button>
-            </div>
-            <div className="space-y-1">
-              {formData.attachments.map((url, idx) => (
-                <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600">
-                  <span className="text-xs truncate max-w-[200px]">{url}</span>
-                  <button type="button" onClick={() => handleRemoveAttachment(idx)} className="text-red-500 p-1"><X size={14} /></button>
-                </div>
-              ))}
-            </div>
-          </div>
-          <button type="submit" disabled={submitting} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold py-3 rounded-xl transition-opacity disabled:opacity-50">
-             {submitting ? 'Envoi...' : 'Publier'}
-          </button>
-        </form>
-      </Modal>
+      )}
     </div>
   );
 }

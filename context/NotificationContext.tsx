@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { AppNotification } from '../types';
 import { useAuth } from './AuthContext';
 import { API } from '../services/api';
@@ -22,6 +22,16 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [permission, setPermission] = useState<NotificationPermission>('default');
 
+  const fetchNotifications = useCallback(async () => {
+    if (!user) return;
+    try {
+      const allNotifs = await API.notifications.list();
+      setNotifications(allNotifs);
+    } catch (e) {
+      console.warn("Notification fetch failed");
+    }
+  }, [user]);
+
   useEffect(() => {
     if ("Notification" in window) {
       setPermission(Notification.permission);
@@ -34,20 +44,17 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
       return;
     }
 
-    const fetchNotifications = async () => {
-      try {
-        const allNotifs = await API.notifications.list();
-        setNotifications(allNotifs);
-      } catch (e) {
-        console.warn("Notification poll failed silently");
-      }
-    };
-
     fetchNotifications();
-    // Optimization: Poll every 30s instead of 5s to save battery and network
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [user]);
+
+    // Souscription temps réel au lieu du polling
+    const subscription = API.notifications.subscribe(user.id, () => {
+      fetchNotifications();
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user, fetchNotifications]);
 
   const requestPermission = async () => {
     if (!("Notification" in window)) return;
@@ -57,8 +64,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const addNotification = async (notif: Omit<AppNotification, 'id' | 'timestamp' | 'isRead'>) => {
     await API.notifications.add(notif);
-    const updated = await API.notifications.list();
-    setNotifications(updated);
+    // Le refresh se fera via la subscription temps réel
   };
 
   const markAsRead = async (id: string) => {

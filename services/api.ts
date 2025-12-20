@@ -5,10 +5,9 @@ import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotific
 
 const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8&chars=2`;
 
-// Cache avec TTL différencié
+// Cache intelligent avec TTL
 const CACHE: Record<string, { data: any, timestamp: number, ttl: number }> = {};
 const DEFAULT_TTL = 30 * 1000; 
-const LONG_TTL = 10 * 60 * 1000; 
 
 const getCached = (key: string) => {
     const entry = CACHE[key];
@@ -60,12 +59,11 @@ const mapAnnouncement = (a: any): Announcement => {
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      const cleanEmail = email.trim().toLowerCase();
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
       if (authError) throw authError;
       
       const { data: profile, error: fetchError } = await supabase.from('profiles')
-        .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
+        .select('*')
         .eq('id', authData.user?.id).maybeSingle();
         
       if (fetchError) throw fetchError;
@@ -76,32 +74,23 @@ export const API = {
     },
 
     getSession: async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) return null;
-        
-        const cacheKey = `profile_${session.user.id}`;
-        const cached = getCached(cacheKey);
-        if (cached) return cached;
-
-        const { data: profile } = await supabase.from('profiles')
-          .select('id, full_name, email, role, classname, school_name, avatar_url, is_active')
-          .eq('id', session.user.id).maybeSingle();
-        
-        const user = profile ? mapProfileToUser(profile) : null;
-        if (user) setCache(cacheKey, user, DEFAULT_TTL);
-        return user;
-      } catch (e) { return null; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return null;
+      
+      const { data: profile } = await supabase.from('profiles')
+        .select('*')
+        .eq('id', session.user.id).maybeSingle();
+      
+      return profile ? mapProfileToUser(profile) : null;
     },
 
-    getUsers: async (): Promise<User[]> => {
-      const cached = getCached('users_list');
-      if (cached) return cached;
-      const { data, error } = await supabase.from('profiles').select('*').order('full_name').limit(200);
+    getUsers: async (page = 0, limit = 50): Promise<User[]> => {
+      const { data, error } = await supabase.from('profiles')
+        .select('*')
+        .order('full_name')
+        .range(page * limit, (page + 1) * limit - 1);
       if (error) return [];
-      const users = (data || []).map(mapProfileToUser);
-      setCache('users_list', users, DEFAULT_TTL);
-      return users;
+      return (data || []).map(mapProfileToUser);
     },
 
     updateProfile: async (id: string, updates: Partial<User>) => {
@@ -114,7 +103,6 @@ export const API = {
       
       const { data, error } = await supabase.from('profiles').update(dbUpdates).eq('id', id).select().maybeSingle();
       if (error) throw error;
-      invalidateCache('users_list');
       invalidateCache(`profile_${id}`);
       return data ? mapProfileToUser(data) : null;
     },
@@ -127,51 +115,46 @@ export const API = {
         options: { data: { full_name: user.name, role: user.role.toLowerCase() } }
       });
       if (error) throw error;
-      if (data.user) {
-          await supabase.from('profiles').upsert({
-              id: data.user.id, full_name: user.name, email: user.email.trim().toLowerCase(),
-              role: user.role.toLowerCase(), classname: user.className || '',
-              is_active: true, avatar_url: getInitialsAvatar(user.name)
-          });
-          invalidateCache('users_list');
-      }
       return data;
     },
+
     logout: async () => { 
         invalidateCache();
         await supabase.signOut(); 
     },
+    
+    toggleUserStatus: async (userId: string) => {
+      const { data: p } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
+      await supabase.from('profiles').update({ is_active: !p?.is_active }).eq('id', userId);
+    },
+
+    deleteUser: async (userId: string) => {
+      await supabase.from('profiles').delete().eq('id', userId);
+    },
+
     updatePassword: async (id: string, pass: string) => {
       const { error } = await supabase.auth.updateUser({ password: pass });
       if (error) throw error;
-    },
-    toggleUserStatus: async (userId: string) => {
-      const { data: p } = await supabase.from('profiles').select('is_active').eq('id', userId).single();
-      const { error } = await supabase.from('profiles').update({ is_active: !p?.is_active }).eq('id', userId);
-      if (error) throw error;
-      invalidateCache('users_list');
-    },
-    deleteUser: async (userId: string) => {
-      const { error } = await supabase.from('profiles').delete().eq('id', userId);
-      if (error) throw error;
-      invalidateCache('users_list');
     }
   },
 
   announcements: {
-    list: async (limit = 50): Promise<Announcement[]> => {
-      const cacheKey = `announcements_${limit}`;
-      const cached = getCached(cacheKey);
-      if (cached) return cached;
-
+    list: async (page = 0, limit = 20): Promise<Announcement[]> => {
       const { data, error } = await supabase.from('announcements')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(limit);
+        .range(page * limit, (page + 1) * limit - 1);
       
-      const res = (data || []).map(mapAnnouncement);
-      if (!error) setCache(cacheKey, res, DEFAULT_TTL);
-      return res;
+      if (error) return [];
+      return (data || []).map(mapAnnouncement);
+    },
+    subscribe: (callback: () => void) => {
+      return supabase
+        .channel('public:announcements')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
+          callback();
+        })
+        .subscribe();
     },
     create: async (ann: any) => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -186,45 +169,36 @@ export const API = {
         attachments: ann.attachments || []
       }).select().single();
       if (error) throw error;
-      invalidateCache('announcements_');
       return mapAnnouncement(data);
     },
     update: async (id: string, ann: any) => {
       const { data, error } = await supabase.from('announcements').update({
-        title: ann.title, 
-        content: ann.content, 
-        priority: ann.priority,
-        classname: ann.className,
-        attachments: ann.attachments || []
+        title: ann.title, content: ann.content, priority: ann.priority, attachments: ann.attachments || []
       }).eq('id', id).select().single();
       if (error) throw error;
-      invalidateCache('announcements_');
       return mapAnnouncement(data);
     },
     delete: async (id: string) => { 
         await supabase.from('announcements').delete().eq('id', id);
-        invalidateCache('announcements_');
     }
   },
 
   polls: {
     list: async (): Promise<Poll[]> => {
-      const cached = getCached('polls_list');
-      if (cached) return cached;
-
       const { data: { user } } = await supabase.auth.getUser();
       const { data: polls, error } = await supabase.from('polls')
-        .select('id, question, classname, is_active, start_time, end_time, created_at, poll_options(id, label, votes)')
+        .select('*, poll_options(*)')
         .order('created_at', { ascending: false });
       
-      if (!polls) return [];
+      if (error || !polls) return [];
       
       let userVotes: any[] = [];
       if (user) {
-        const { data } = await supabase.from('poll_votes').select('poll_id, option_id').eq('user_id', user.id);
+        const { data } = await supabase.from('poll_votes').select('*').eq('user_id', user.id);
         userVotes = data || [];
       }
-      const res = (polls || []).map(p => {
+
+      return polls.map(p => {
         const options = (p.poll_options || []).map((o: any) => ({ id: o.id, label: o.label, votes: o.votes || 0 }));
         const userVote = userVotes.find(v => v.poll_id === p.id);
         return {
@@ -234,183 +208,109 @@ export const API = {
           startTime: p.start_time, endTime: p.end_time
         };
       });
-      if (!error) setCache('polls_list', res, DEFAULT_TTL);
-      return res;
+    },
+    subscribe: (callback: () => void) => {
+      return supabase
+        .channel('public:polls_sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'polls' }, callback)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, callback)
+        .subscribe();
     },
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      
-      // On utilise prioritairement l'upsert pour permettre le changement de vote
-      // La contrainte d'unicité sur (poll_id, user_id) dans la table poll_votes
-      // permet de mettre à jour le option_id automatiquement.
       const { error } = await supabase.from('poll_votes').upsert({ 
-        poll_id: pollId, 
-        user_id: user.id, 
-        option_id: optionId 
-      }, { 
-        onConflict: 'poll_id,user_id' 
-      });
-
-      if (error) {
-        console.error("Erreur lors du vote:", error);
-        throw error;
-      }
-      
-      invalidateCache('polls_list');
+        poll_id: pollId, user_id: user.id, option_id: optionId 
+      }, { onConflict: 'poll_id,user_id' });
+      if (error) throw error;
     },
     create: async (p: any) => {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) throw new Error("Veuillez vous reconnecter.");
-
-      // Insertion du sondage
-      const { data: poll, error: pollErr } = await supabase
-        .from('polls')
-        .insert({
-          question: p.question, 
-          classname: p.className || 'Général', 
-          is_active: true, 
-          start_time: p.startTime || null, 
-          end_time: p.endTime || null,
-          creator_id: authUser.id
-        })
-        .select('id, question, classname');
-      
-      if (pollErr) {
-        if (pollErr.code === 'PGRST204' || pollErr.message?.includes('column')) {
-           throw new Error("⚠️ Erreur de cache API : Allez dans Supabase SQL Editor et lancez 'NOTIFY pgrst, reload schema' pour que les nouvelles colonnes soient reconnues.");
-        }
-        throw new Error("Erreur base de données: " + (pollErr.message || pollErr.code));
-      }
-
-      if (!poll || poll.length === 0) {
-        throw new Error("Création réussie mais lecture impossible. Vérifiez les politiques RLS dans Supabase.");
-      }
-
-      const newPollId = poll[0].id;
-      const options = p.options.map((o: any) => ({ poll_id: newPollId, label: o.label, votes: 0 }));
-      const { error: optErr } = await supabase.from('poll_options').insert(options);
-      
-      if (optErr) {
-          await supabase.from('polls').delete().eq('id', newPollId);
-          throw new Error("Erreur options: " + optErr.message);
-      }
-
-      invalidateCache('polls_list');
-      return poll[0];
-    },
-    update: async (id: string, p: any) => {
-      const { data, error } = await supabase.from('polls').update({
-        question: p.question, start_time: p.startTime, end_time: p.endTime
-      }).eq('id', id).select().single();
-      if (error) throw error;
-      invalidateCache('polls_list');
-      return data;
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: poll, error: pollErr } = await supabase.from('polls').insert({
+          question: p.question, classname: p.className, is_active: true, creator_id: user?.id,
+          start_time: p.startTime, end_time: p.endTime
+      }).select().single();
+      if (pollErr) throw pollErr;
+      const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
+      await supabase.from('poll_options').insert(options);
+      return poll;
     },
     toggleStatus: async (id: string) => {
-        const { data: p } = await supabase.from('polls').select('is_active').eq('id', id).single();
-        await supabase.from('polls').update({ is_active: !p?.is_active }).eq('id', id);
-        invalidateCache('polls_list');
+      const { data: p } = await supabase.from('polls').select('is_active').eq('id', id).single();
+      await supabase.from('polls').update({ is_active: !p?.is_active }).eq('id', id);
     },
     delete: async (id: string) => {
-        await supabase.from('polls').delete().eq('id', id);
-        invalidateCache('polls_list');
+      await supabase.from('polls').delete().eq('id', id);
+    },
+    update: async (id: string, p: any) => {
+      await supabase.from('polls').update({ question: p.question, start_time: p.startTime, end_time: p.endTime }).eq('id', id);
     }
   },
 
   exams: {
     list: async (): Promise<Exam[]> => {
-      const cached = getCached('exams_list');
-      if (cached) return cached;
       const { data, error } = await supabase.from('exams').select('*').order('exam_date', { ascending: true });
       if (error) return [];
-      const res = (data || []).map(e => ({
+      return data.map(e => ({
         id: e.id, subject: e.subject, date: e.exam_date, duration: e.duration, room: e.room, notes: e.notes, className: e.classname || ''
       }));
-      setCache('exams_list', res, DEFAULT_TTL);
-      return res;
     },
     create: async (exam: any) => {
       const { data, error } = await supabase.from('exams').insert({
-        subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className || 'Général'
+        subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className
       }).select().single();
       if (error) throw error;
-      invalidateCache('exams_list');
       return { ...exam, id: data.id };
     },
     update: async (id: string, exam: any) => {
-      const { data, error } = await supabase.from('exams').update({
+      await supabase.from('exams').update({
         subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes
-      }).eq('id', id).select().single();
-      if (error) throw error;
-      invalidateCache('exams_list');
-      return { id: data.id, subject: data.subject, date: data.exam_date, duration: data.duration, room: data.room, notes: data.notes, className: data.classname || '' };
+      }).eq('id', id);
     },
-    delete: async (id: string) => { 
-        await supabase.from('exams').delete().eq('id', id);
-        invalidateCache('exams_list');
+    delete: async (id: string) => {
+      await supabase.from('exams').delete().eq('id', id);
     }
   },
 
   classes: {
     list: async (): Promise<ClassGroup[]> => {
-      const cached = getCached('classes_list');
-      if (cached) return cached;
-      const { data, error } = await supabase.from('classes').select('id, name, email').order('name');
+      const { data, error } = await supabase.from('classes').select('*').order('name');
       if (error) return [];
-      const classes = (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
-      setCache('classes_list', classes, LONG_TTL); 
-      return classes;
+      return data.map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
     },
     create: async (name: string, email: string) => {
       await supabase.from('classes').insert({ name, email });
-      invalidateCache('classes_list');
     },
     update: async (id: string, cls: { name: string, email: string }) => {
       await supabase.from('classes').update({ name: cls.name, email: cls.email }).eq('id', id);
-      invalidateCache('classes_list');
     },
     delete: async (id: string) => {
       await supabase.from('classes').delete().eq('id', id);
-      invalidateCache('classes_list');
     }
   },
 
   notifications: {
-    list: async (limit = 20): Promise<AppNotification[]> => {
+    list: async (limit = 50): Promise<AppNotification[]> => {
       const { data: { user } } = await supabase.auth.getSession();
       if (!user) return [];
-      
-      const { data: profile } = await supabase.from('profiles').select('role, classname').eq('id', user.id).single();
-      const role = profile?.role?.toUpperCase();
-      const className = profile?.classname;
-
-      let orFilter = `user_id.eq.${user.id},target_class.eq.Général`;
-      if (role === 'ADMIN') orFilter += `,target_role.eq.ADMIN`;
-      else if (role === 'DELEGATE') orFilter += `,target_role.eq.DELEGATE`;
-
       const { data } = await supabase.from('notifications')
         .select('*')
-        .or(orFilter)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(limit);
-      
-      let filtered = data || [];
-      if (role === 'DELEGATE') {
-        filtered = filtered.filter(n => n.target_class === 'Général' || n.target_class === className || n.user_id === user.id);
-      }
-
-      return filtered.map(n => ({ 
+      return (data || []).map(n => ({ 
         id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read, link: n.link 
       }));
     },
+    subscribe: (userId: string, callback: () => void) => {
+      return supabase
+        .channel(`public:notifications:${userId}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` }, callback)
+        .subscribe();
+    },
     markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
-    add: async (notif: Partial<AppNotification> & { targetRole?: string, targetClass?: string }) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('notifications').insert({
-        title: notif.title, message: notif.message, type: notif.type || 'info', user_id: user?.id, 
-        target_class: notif.targetClass || 'Général', target_role: notif.targetRole, link: notif.link, is_read: false
-      });
+    add: async (notif: any) => {
+       await supabase.from('notifications').insert(notif);
     },
     markAllRead: async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -424,63 +324,49 @@ export const API = {
 
   meet: {
     list: async (): Promise<MeetLink[]> => {
-      const cached = getCached('meet_list');
-      if (cached) return cached;
       const { data, error } = await supabase.from('meet_links').select('*');
       if (error) return [];
-      const res = (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
-      setCache('meet_list', res, DEFAULT_TTL);
-      return res;
+      return data.map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
     },
     create: async (m: any) => {
       const { data, error } = await supabase.from('meet_links').insert({
-        title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className || 'Général'
+        title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className
       }).select().single();
       if (error) throw error;
-      invalidateCache('meet_list');
-      return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
+      return data;
     },
     update: async (id: string, m: any) => {
-      const { data, error } = await supabase.from('meet_links').update({
-        title: m.title, platform: m.platform, url: m.url, time: m.time
-      }).eq('id', id).select().single();
-      if (error) throw error;
-      invalidateCache('meet_list');
-      return { id: data.id, title: data.title, platform: data.platform as any, url: data.url, time: data.time, className: data.classname };
+      await supabase.from('meet_links').update({ title: m.title, platform: m.platform, url: m.url, time: m.time }).eq('id', id);
     },
     delete: async (id: string) => { 
         await supabase.from('meet_links').delete().eq('id', id);
-        invalidateCache('meet_list');
     }
   },
 
   schedules: {
-    list: async (): Promise<ScheduleFile[]> => {
-      const cached = getCached('schedules_list');
-      if (cached) return cached;
-      const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false }).limit(10);
+    list: async (limit = 10): Promise<ScheduleFile[]> => {
+      const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false }).limit(limit);
       if (error) return [];
-      const res = (data || []).map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.classname }));
-      setCache('schedules_list', res, DEFAULT_TTL);
-      return res;
+      return data.map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.classname }));
     },
     create: async (sch: any) => {
       const { data, error } = await supabase.from('schedules').insert({
-        version: sch.version, url: sch.url, classname: sch.className || 'Général'
+        version: sch.version, url: sch.url, classname: sch.className
       }).select().single();
       if (error) throw error;
-      invalidateCache('schedules_list');
-      return { id: data.id, version: data.version, uploadDate: data.upload_date, url: data.url, className: data.classname };
+      return data;
     },
     delete: async (id: string) => { 
         await supabase.from('schedules').delete().eq('id', id);
-        invalidateCache('schedules_list');
     }
   },
 
   logs: {
-    list: async (limit = 100): Promise<ActivityLog[]> => {
-      const { data } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+    list: async (page = 0, limit = 50): Promise<ActivityLog[]> => {
+      const { data } = await supabase.from('activity_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(page * limit, (page + 1) * limit - 1);
       return (data || []).map(l => ({ id: l.id, actor: l.actor, action: l.action, target: l.target, type: l.type as any, timestamp: l.created_at }));
     },
     add: async (actor: string, action: string, target: string, type: string) => {
