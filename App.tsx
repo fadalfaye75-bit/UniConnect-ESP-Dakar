@@ -1,4 +1,3 @@
-
 import React, { lazy, Suspense, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -29,7 +28,7 @@ const ScrollToTop = () => {
 const LoadingFallback = () => (
   <div className="flex flex-col items-center justify-center min-h-[400px] w-full bg-gray-50/50 dark:bg-gray-900/50">
     <Loader2 className="animate-spin text-primary-500 mb-4" size={40} />
-    <p className="text-sm font-bold text-gray-500 animate-pulse">Chargement de la page...</p>
+    <p className="text-sm font-bold text-gray-500 animate-pulse">Chargement de UniConnect...</p>
   </div>
 );
 

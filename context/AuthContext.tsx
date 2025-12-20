@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types';
 import { API } from '../services/api';
@@ -73,16 +72,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(null);
       setAdminViewClass(null);
       
-      // 3. Nettoyage manuel du stockage local lié à Supabase pour forcer une session vierge
+      // 3. Nettoyage manuel du stockage local pour forcer une déconnexion complète
       const keys = Object.keys(localStorage);
       keys.forEach(key => {
         if (key.includes('supabase.auth.token') || key.includes('-auth-token')) {
           localStorage.removeItem(key);
         }
       });
+      
+      // Petit hack pour s'assurer que l'app est clean
+      window.location.href = '#/login';
     } catch (e) {
       console.warn("Logout process had issues, force clearing state.", e);
       setUser(null);
+      window.location.href = '#/login';
     }
   };
 
@@ -105,7 +108,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return (
           <div id="app-loader">
               <div className="spinner"></div>
-              <p className="mt-4 text-sm font-medium text-gray-500">UniConnect ESP - Session sécurisée...</p>
+              <p className="mt-4 text-sm font-black text-gray-500 uppercase tracking-widest italic animate-pulse">Session UniConnect...</p>
           </div>
       );
   }
