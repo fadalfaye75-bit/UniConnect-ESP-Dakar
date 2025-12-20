@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API } from '../services/api';
 import { Announcement, Exam, UserRole } from '../types';
@@ -7,13 +7,12 @@ import { Clock, FileText, GraduationCap, Loader2, ChevronRight, BarChart2, Calen
 import { Link, useNavigate } from 'react-router-dom';
 
 const getAnnouncementImage = (id: string) => {
-  // Deterministic selection of professional university-themed images
   const images = [
-    'https://images.unsplash.com/photo-1523050335392-9bef867a0578?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1541339907198-e08756ebafe3?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1498243639359-2cee506b74ad?auto=format&fit=crop&q=80&w=800',
-    'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=80&w=800'
+    'https://images.unsplash.com/photo-1523050335392-9bef867a0578?auto=format&fit=crop&q=60&w=400',
+    'https://images.unsplash.com/photo-1541339907198-e08756ebafe3?auto=format&fit=crop&q=60&w=400',
+    'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=60&w=400',
+    'https://images.unsplash.com/photo-1498243639359-2cee506b74ad?auto=format&fit=crop&q=60&w=400',
+    'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=60&w=400'
   ];
   const index = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % images.length;
   return images[index];
@@ -27,21 +26,15 @@ export default function Dashboard() {
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      fetchDashboardData();
-    }
-  }, [user, adminViewClass]);
-
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async (isInitial = false) => {
     try {
-      setLoading(announcements.length === 0);
+      if (isInitial) setLoading(true);
       
       const targetClass = (user?.role === UserRole.ADMIN && adminViewClass) ? adminViewClass : (user?.className || '');
       const isAdmin = user?.role === UserRole.ADMIN && !adminViewClass;
 
       const [allAnns, allExams] = await Promise.all([
-          API.announcements.list(5),
+          API.announcements.list(10),
           API.exams.list()
       ]);
 
@@ -62,13 +55,23 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, adminViewClass]);
+
+  useEffect(() => {
+    if (user) {
+      fetchDashboardData(announcements.length === 0);
+    }
+  }, [user, adminViewClass, fetchDashboardData]);
+
+  const formattedDate = useMemo(() => {
+    return new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  }, []);
 
   if (loading) {
     return (
       <div className="flex flex-col justify-center items-center h-[calc(100vh-160px)] gap-4">
         <Loader2 className="animate-spin text-primary-500" size={40} />
-        <span className="text-sm font-bold text-gray-400 animate-pulse">Synchronisation de vos données...</span>
+        <span className="text-sm font-bold text-gray-400 animate-pulse">Chargement instantané...</span>
       </div>
     );
   }
@@ -86,7 +89,7 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-3 text-xs font-bold text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 px-4 py-2 rounded-xl border border-gray-100 dark:border-gray-700 shadow-soft uppercase tracking-wider">
           <Calendar size={14} className="text-primary-500" />
-          {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+          {formattedDate}
         </div>
       </div>
 
@@ -149,10 +152,11 @@ export default function Dashboard() {
                   onClick={() => navigate('/announcements')} 
                   className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft border border-gray-100 dark:border-gray-700 hover:shadow-xl hover:border-primary-300 transition-all cursor-pointer group flex flex-col overflow-hidden"
                 >
-                  <div className="relative h-40 overflow-hidden">
+                  <div className="relative h-40 overflow-hidden bg-gray-200 dark:bg-gray-700">
                     <img 
                       src={getAnnouncementImage(ann.id)} 
                       alt={ann.title}
+                      loading="lazy"
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
@@ -190,11 +194,6 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-            {announcements.length === 0 && (
-               <div className="p-12 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 text-center text-gray-400 text-sm font-medium">
-                 Aucun avis disponible pour le moment.
-               </div>
-            )}
           </section>
         </div>
 

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Megaphone, Calendar, GraduationCap, Video, 
@@ -31,7 +31,6 @@ export default function Layout() {
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
   
   const [classesList, setClassesList] = useState<{id: string, name: string}[]>([]);
-  
   const [fullData, setFullData] = useState<{
     anns: any[],
     exams: any[],
@@ -54,6 +53,7 @@ export default function Layout() {
       }
   }, [user]);
 
+  // Chargement des données de recherche à l'ouverture du modal seulement
   useEffect(() => {
     if (isSearchOpen && !fullData) {
       const loadSearchData = async () => {
@@ -106,16 +106,17 @@ export default function Layout() {
     return results.slice(0, 10);
   }, [searchQuery, fullData]);
 
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.ctrlKey && e.key === 'k') {
+      e.preventDefault();
+      setSearchOpen(true);
+    }
+  }, []);
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 'k') {
-        e.preventDefault();
-        setSearchOpen(true);
-      }
-    };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [handleKeyDown]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -127,58 +128,23 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  useEffect(() => {
-    if (notifications.length > 0) {
-      const latest = notifications[0];
-      const isRecent = new Date().getTime() - new Date(latest.timestamp).getTime() < 5000;
-      if (isRecent && !latest.isRead) {
-        setActiveToast(latest);
-        const timer = setTimeout(() => setActiveToast(null), 5000);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [notifications]);
-
-  useEffect(() => {
-    if (isSearchOpen && searchInputRef.current) {
-      setTimeout(() => searchInputRef.current?.focus(), 50);
-    }
-  }, [isSearchOpen]);
-
-  const navItems = [
-    { to: '/', icon: LayoutDashboard, label: 'Tableau de Bord', end: true },
-    { to: '/announcements', icon: Megaphone, label: 'Annonces' },
-    { to: '/schedule', icon: Calendar, label: 'Emploi du Temps' },
-    { to: '/exams', icon: GraduationCap, label: 'Examens' },
-    { to: '/meet', icon: Video, label: 'Visioconférence' },
-    { to: '/polls', icon: BarChart2, label: 'Consultations' },
-    { to: '/profile', icon: UserCircle, label: 'Mon Profil' },
-  ];
-
-  if (user?.role === 'ADMIN') {
-    navItems.push({ to: '/admin', icon: ShieldCheck, label: 'Administration' } as any);
-  }
+  const navItems = useMemo(() => {
+    const items = [
+      { to: '/', icon: LayoutDashboard, label: 'Tableau de Bord', end: true },
+      { to: '/announcements', icon: Megaphone, label: 'Annonces' },
+      { to: '/schedule', icon: Calendar, label: 'Emploi du Temps' },
+      { to: '/exams', icon: GraduationCap, label: 'Examens' },
+      { to: '/meet', icon: Video, label: 'Visioconférence' },
+      { to: '/polls', icon: BarChart2, label: 'Consultations' },
+      { to: '/profile', icon: UserCircle, label: 'Mon Profil' },
+    ];
+    if (user?.role === 'ADMIN') items.push({ to: '/admin', icon: ShieldCheck, label: 'Administration' } as any);
+    return items;
+  }, [user?.role]);
 
   const handleResultClick = (link: string) => {
     setSearchOpen(false);
     navigate(link);
-  };
-
-  const handleNotifClick = (notif: AppNotification) => {
-    markAsRead(notif.id);
-    if (notif.link) {
-      navigate(notif.link);
-      setNotifOpen(false);
-    }
-  };
-
-  const getNotifIcon = (type: string) => {
-    switch(type) {
-      case 'warning': return <AlertTriangle size={16} className="text-orange-500" />;
-      case 'success': return <CheckCircle size={16} className="text-primary-500" />;
-      case 'alert': return <AlertCircle size={16} className="text-red-500" />;
-      default: return <Info size={16} className="text-primary-400" />;
-    }
   };
 
   const handleLogout = () => {
@@ -190,13 +156,10 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 transition-colors font-sans overflow-hidden">
-      
-      {/* Sidebar Mobile Overlay */}
       {isSidebarOpen && (
         <div className="fixed inset-0 z-40 bg-gray-800/60 md:hidden backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Desktop & Mobile Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 border-r border-gray-100 dark:border-gray-700 transform transition-transform duration-300 ease-in-out md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} shadow-lg md:shadow-none flex flex-col`}>
         <div className="flex items-center justify-between p-6 h-20 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -214,13 +177,12 @@ export default function Layout() {
         </div>
 
         <div className="px-4 py-2 flex-1 overflow-y-auto custom-scrollbar">
-          {/* User Profile Summary */}
           <NavLink 
             to="/profile" 
             className={({isActive}) => `flex items-center gap-3 mb-8 p-3 rounded-xl transition-all group border ${isActive ? 'bg-primary-50/50 border-primary-100 dark:bg-primary-900/10 dark:border-primary-800/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50 border-transparent hover:border-gray-100 dark:hover:border-gray-600'}`}
           >
              <div className="relative flex-shrink-0">
-                <img src={user?.avatar} alt="Profile" className="w-12 h-12 rounded-full object-cover border-[3px] border-primary-500 dark:border-primary-400 shadow-lg ring-2 ring-white dark:ring-gray-800 transition-all group-hover:scale-105" />
+                <img src={user?.avatar} alt="Profile" loading="lazy" className="w-12 h-12 rounded-full object-cover border-[3px] border-primary-500 dark:border-primary-400 shadow-lg ring-2 ring-white dark:ring-gray-800 transition-all group-hover:scale-105" />
                 <div className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full shadow-sm"></div>
              </div>
              <div className="flex-1 min-w-0">
@@ -229,9 +191,8 @@ export default function Layout() {
              </div>
           </NavLink>
 
-          {/* Admin Switcher */}
           {user?.role === 'ADMIN' && (
-            <div className="mb-6 px-1 animate-in slide-in-from-left duration-300">
+            <div className="mb-6 px-1">
                <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider ml-2 mb-2 block">Vue Administrative</label>
                <select 
                 className="w-full p-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-primary-300 transition-all cursor-pointer"
@@ -244,7 +205,6 @@ export default function Layout() {
             </div>
           )}
 
-          {/* Navigation Links */}
           <nav className="space-y-1">
             <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider ml-2 mb-2 block">Menu Principal</label>
             {navItems.map((item) => (
@@ -265,7 +225,6 @@ export default function Layout() {
           </nav>
         </div>
 
-        {/* Sidebar Footer */}
         <div className="p-4 m-4 border-t border-gray-100 dark:border-gray-700">
           <button onClick={handleLogout} className="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-900/20 rounded-lg transition-colors">
             <LogOut size={18} />
@@ -274,7 +233,6 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
       <div className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden bg-gray-50/50 dark:bg-gray-900">
         <header className="h-20 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md border-b border-gray-100 dark:border-gray-700 flex items-center justify-between px-6 z-20 sticky top-0">
           <div className="flex items-center gap-3 md:hidden">
@@ -325,9 +283,9 @@ export default function Layout() {
                           </div>
                         ) : (
                           notifications.map((notif) => (
-                            <div key={notif.id} onClick={() => handleNotifClick(notif)} className={`p-4 border-b border-gray-50 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors ${!notif.isRead ? 'bg-primary-50/20' : ''}`}>
+                            <div key={notif.id} onClick={() => { markAsRead(notif.id); if(notif.link) { navigate(notif.link); setNotifOpen(false); } }} className={`p-4 border-b border-gray-50 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors ${!notif.isRead ? 'bg-primary-50/20' : ''}`}>
                               <div className="flex gap-3">
-                                <div className="mt-0.5">{getNotifIcon(notif.type)}</div>
+                                <div className="mt-0.5"><Info size={16} className="text-primary-400" /></div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex justify-between items-start mb-1">
                                     <h4 className={`text-sm truncate ${!notif.isRead ? 'font-bold' : 'text-gray-600'}`}>{notif.title}</h4>
@@ -360,12 +318,10 @@ export default function Layout() {
           </div>
         </header>
 
-        {/* Scrollable Content */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-8 pb-24 md:pb-8 bg-gray-50/50 dark:bg-gray-900 custom-scrollbar animate-fade-in">
           <Outlet />
         </main>
 
-        {/* Mobile Navigation Bar */}
         <nav className="md:hidden fixed bottom-0 w-full bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex justify-around py-3 z-30 shadow-soft">
           <NavLink to="/" end className={({isActive}) => `p-2 rounded-xl transition-all ${isActive ? 'text-primary-500 bg-primary-50 dark:bg-gray-700' : 'text-gray-400'}`}>
             <LayoutDashboard size={24} />
@@ -382,22 +338,6 @@ export default function Layout() {
         </nav>
       </div>
 
-      {/* Global Toast Notification */}
-      {activeToast && (
-        <div className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-[100] w-80 bg-white dark:bg-gray-800 rounded-xl shadow-soft border border-gray-100 dark:border-gray-700 animate-in slide-in-from-right-10 overflow-hidden">
-          <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary-500"></div>
-          <div className="p-4 flex gap-3">
-             <div className="mt-0.5">{getNotifIcon(activeToast.type)}</div>
-             <div className="flex-1">
-               <h4 className="text-sm font-bold truncate">{activeToast.title}</h4>
-               <p className="text-xs text-gray-500 line-clamp-2">{activeToast.message}</p>
-             </div>
-             <button onClick={() => setActiveToast(null)} className="text-gray-300 hover:text-gray-500"><X size={16} /></button>
-          </div>
-        </div>
-      )}
-
-      {/* Global Search Modal */}
       {isSearchOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-24 px-4 bg-gray-900/60 backdrop-blur-sm" onClick={() => setSearchOpen(false)}>
            <div className="w-full max-w-2xl bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[70vh] border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
@@ -420,7 +360,7 @@ export default function Layout() {
                {!fullData ? (
                    <div className="py-12 flex flex-col items-center text-gray-400">
                        <Loader2 size={32} className="animate-spin mb-2 text-primary-500" />
-                       <span className="text-sm font-medium">Initialisation des données...</span>
+                       <span className="text-sm font-medium">Indexation ultra-rapide...</span>
                    </div>
                ) : searchResults.length > 0 ? (
                   <div className="space-y-1">

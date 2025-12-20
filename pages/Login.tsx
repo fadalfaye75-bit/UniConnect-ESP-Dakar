@@ -67,7 +67,9 @@ export default function Login() {
              </svg>
           </div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white tracking-tight">UniConnect ESP</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">Portail École Supérieure Polytechnique de Dakar</p>
+          <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm leading-relaxed">
+            UniConnect est une plateforme de gestion scolaire universitaire centralisée. Elle connecte l'administration, les délégués et les étudiants.
+          </p>
         </div>
 
         {error && (
@@ -126,7 +128,7 @@ export default function Login() {
         </form>
 
         <div className="mt-8 text-center">
-            <p className="text-xs text-gray-400">Portail officiel de gestion de scolarité.</p>
+            <p className="text-xs text-gray-400">Portail officiel de gestion de scolarité de l'ESP Dakar.</p>
         </div>
       </div>
     </div>

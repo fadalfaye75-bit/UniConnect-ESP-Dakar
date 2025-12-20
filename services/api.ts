@@ -5,18 +5,19 @@ import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotific
 
 const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8`;
 
-// Cache ultra-rapide pour éviter les requêtes inutiles
-const CACHE: Record<string, { data: any, timestamp: number }> = {};
-const CACHE_TTL = 45 * 1000; // 45 secondes de cache
+// Cache avec TTL différencié
+const CACHE: Record<string, { data: any, timestamp: number, ttl: number }> = {};
+const DEFAULT_TTL = 30 * 1000; // 30 secondes par défaut
+const LONG_TTL = 10 * 60 * 1000; // 10 minutes pour les données quasi-statiques (classes)
 
 const getCached = (key: string) => {
     const entry = CACHE[key];
-    if (entry && Date.now() - entry.timestamp < CACHE_TTL) return entry.data;
+    if (entry && Date.now() - entry.timestamp < entry.ttl) return entry.data;
     return null;
 };
 
-const setCache = (key: string, data: any) => {
-    CACHE[key] = { data, timestamp: Date.now() };
+const setCache = (key: string, data: any, ttl = DEFAULT_TTL) => {
+    CACHE[key] = { data, timestamp: Date.now(), ttl };
 };
 
 export const invalidateCache = (prefix?: string) => {
@@ -69,7 +70,7 @@ export const API = {
       if (fetchError) throw fetchError;
       if (!profile) throw new Error("Profil non trouvé.");
       
-      invalidateCache(); // On vide le cache à la connexion
+      invalidateCache();
       return mapProfileToUser(profile);
     },
 
@@ -77,7 +78,9 @@ export const API = {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return null;
-        const cached = getCached(`profile_${session.user.id}`);
+        
+        const cacheKey = `profile_${session.user.id}`;
+        const cached = getCached(cacheKey);
         if (cached) return cached;
 
         const { data: profile } = await supabase.from('profiles')
@@ -85,7 +88,7 @@ export const API = {
           .eq('id', session.user.id).maybeSingle();
         
         const user = profile ? mapProfileToUser(profile) : null;
-        if (user) setCache(`profile_${session.user.id}`, user);
+        if (user) setCache(cacheKey, user, DEFAULT_TTL);
         return user;
       } catch (e) { return null; }
     },
@@ -96,7 +99,7 @@ export const API = {
       const { data, error } = await supabase.from('profiles').select('*').order('full_name').limit(200);
       if (error) return [];
       const users = (data || []).map(mapProfileToUser);
-      setCache('users_list', users);
+      setCache('users_list', users, DEFAULT_TTL);
       return users;
     },
 
@@ -166,7 +169,7 @@ export const API = {
         .limit(limit);
       
       const res = (data || []).map(mapAnnouncement);
-      if (!error) setCache(cacheKey, res);
+      if (!error) setCache(cacheKey, res, DEFAULT_TTL);
       return res;
     },
     create: async (ann: any) => {
@@ -222,49 +225,18 @@ export const API = {
           startTime: p.start_time, endTime: p.end_time
         };
       });
-      if (!error) setCache('polls_list', res);
+      if (!error) setCache('polls_list', res, DEFAULT_TTL);
       return res;
     },
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      // Enregistrement du vote
       await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
-      
-      // Récupération des infos pour la notification
-      const { data: poll } = await supabase.from('polls').select('question, classname').eq('id', pollId).single();
-      const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).single();
-
-      if (poll) {
-        const studentName = profile?.full_name || 'Un étudiant';
-        const questionText = poll.question.length > 30 ? poll.question.substring(0, 30) + '...' : poll.question;
-
-        // Notifier le délégué de la classe
-        await API.notifications.add({
-          title: 'Participation au sondage',
-          message: `${studentName} a répondu à : "${questionText}"`,
-          type: 'info',
-          targetClass: poll.classname,
-          targetRole: UserRole.DELEGATE,
-          link: '/polls'
-        });
-
-        // Notifier l'administrateur
-        await API.notifications.add({
-          title: 'Activité Sondage',
-          message: `Nouveau vote dans la classe ${poll.classname} pour "${questionText}"`,
-          type: 'info',
-          targetRole: UserRole.ADMIN,
-          link: '/polls'
-        });
-      }
-
       invalidateCache('polls_list');
     },
     create: async (p: any) => {
       const { data: poll, error: pollErr } = await supabase.from('polls').insert({
-        question: p.question, classname: p.className, is_active: true, start_time: p.start_time, end_time: p.end_time
+        question: p.question, classname: p.className || 'Général', is_active: true, start_time: p.startTime, end_time: p.endTime
       }).select().single();
       if (pollErr) throw pollErr;
       const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
@@ -300,12 +272,12 @@ export const API = {
       const res = (data || []).map(e => ({
         id: e.id, subject: e.subject, date: e.exam_date, duration: e.duration, room: e.room, notes: e.notes, className: e.classname || ''
       }));
-      setCache('exams_list', res);
+      setCache('exams_list', res, DEFAULT_TTL);
       return res;
     },
     create: async (exam: any) => {
       const { data, error } = await supabase.from('exams').insert({
-        subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className
+        subject: exam.subject, exam_date: exam.date, duration: exam.duration, room: exam.room, notes: exam.notes, classname: exam.className || 'Général'
       }).select().single();
       if (error) throw error;
       invalidateCache('exams_list');
@@ -332,7 +304,7 @@ export const API = {
       const { data, error } = await supabase.from('classes').select('id, name, email').order('name');
       if (error) return [];
       const classes = (data || []).map(c => ({ id: c.id, name: c.name, email: c.email || '', studentCount: 0 }));
-      setCache('classes_list', classes);
+      setCache('classes_list', classes, LONG_TTL); // Cache long car peu de changements
       return classes;
     },
     create: async (name: string, email: string) => {
@@ -358,15 +330,9 @@ export const API = {
       const role = profile?.role?.toUpperCase();
       const className = profile?.classname;
 
-      // Construction de la requête avec filtres de ciblage
       let orFilter = `user_id.eq.${user.id},target_class.eq.Général`;
-      
-      if (role === 'ADMIN') {
-        orFilter += `,target_role.eq.ADMIN`;
-      } else if (role === 'DELEGATE') {
-        // Un délégué reçoit les notifs pour son rôle DANS sa classe
-        orFilter += `,target_role.eq.DELEGATE`;
-      }
+      if (role === 'ADMIN') orFilter += `,target_role.eq.ADMIN`;
+      else if (role === 'DELEGATE') orFilter += `,target_role.eq.DELEGATE`;
 
       const { data } = await supabase.from('notifications')
         .select('*')
@@ -375,38 +341,20 @@ export const API = {
         .limit(limit);
       
       let filtered = data || [];
-      
-      // Filtrage post-requête pour la précision délégué/classe
       if (role === 'DELEGATE') {
-        filtered = filtered.filter(n => 
-            n.target_class === 'Général' || 
-            n.target_class === className || 
-            n.user_id === user.id
-        );
+        filtered = filtered.filter(n => n.target_class === 'Général' || n.target_class === className || n.user_id === user.id);
       }
 
       return filtered.map(n => ({ 
-        id: n.id, 
-        title: n.title, 
-        message: n.message, 
-        type: n.type as any, 
-        timestamp: n.created_at, 
-        isRead: n.is_read,
-        link: n.link 
+        id: n.id, title: n.title, message: n.message, type: n.type as any, timestamp: n.created_at, isRead: n.is_read, link: n.link 
       }));
     },
     markRead: async (id: string) => { await supabase.from('notifications').update({ is_read: true }).eq('id', id); },
     add: async (notif: Partial<AppNotification> & { targetRole?: string, targetClass?: string }) => {
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('notifications').insert({
-        title: notif.title, 
-        message: notif.message, 
-        type: notif.type || 'info',
-        user_id: user?.id, 
-        target_class: notif.targetClass || 'Général',
-        target_role: notif.targetRole,
-        link: notif.link,
-        is_read: false
+        title: notif.title, message: notif.message, type: notif.type || 'info', user_id: user?.id, 
+        target_class: notif.targetClass || 'Général', target_role: notif.targetRole, link: notif.link, is_read: false
       });
     },
     markAllRead: async () => {
@@ -426,12 +374,12 @@ export const API = {
       const { data, error } = await supabase.from('meet_links').select('*');
       if (error) return [];
       const res = (data || []).map(m => ({ id: m.id, title: m.title, platform: m.platform as any, url: m.url, time: m.time, className: m.classname }));
-      setCache('meet_list', res);
+      setCache('meet_list', res, DEFAULT_TTL);
       return res;
     },
     create: async (m: any) => {
       const { data, error } = await supabase.from('meet_links').insert({
-        title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className
+        title: m.title, platform: m.platform, url: m.url, time: m.time, classname: m.className || 'Général'
       }).select().single();
       if (error) throw error;
       invalidateCache('meet_list');
@@ -458,12 +406,12 @@ export const API = {
       const { data, error } = await supabase.from('schedules').select('*').order('upload_date', { ascending: false }).limit(10);
       if (error) return [];
       const res = (data || []).map(s => ({ id: s.id, version: s.version, uploadDate: s.upload_date, url: s.url, className: s.classname }));
-      setCache('schedules_list', res);
+      setCache('schedules_list', res, DEFAULT_TTL);
       return res;
     },
     create: async (sch: any) => {
       const { data, error } = await supabase.from('schedules').insert({
-        version: sch.version, url: sch.url, classname: sch.className
+        version: sch.version, url: sch.url, classname: sch.className || 'Général'
       }).select().single();
       if (error) throw error;
       invalidateCache('schedules_list');
