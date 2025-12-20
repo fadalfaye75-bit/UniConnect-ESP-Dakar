@@ -95,7 +95,13 @@ export const API = {
 
     updateProfile: async (id: string, updates: Partial<User>) => {
       const dbUpdates: any = {};
-      if (updates.name) dbUpdates.full_name = updates.name;
+      if (updates.name) {
+        dbUpdates.full_name = updates.name;
+        // L'avatar suit automatiquement le nom si aucune URL d'avatar spécifique n'est fournie
+        if (!updates.avatar) {
+          dbUpdates.avatar_url = getInitialsAvatar(updates.name);
+        }
+      }
       if (updates.role) dbUpdates.role = updates.role.toLowerCase();
       if (updates.className !== undefined) dbUpdates.classname = updates.className;
       if (updates.schoolName !== undefined) dbUpdates.school_name = updates.schoolName;
@@ -115,6 +121,13 @@ export const API = {
         options: { data: { full_name: user.name, role: user.role.toLowerCase() } }
       });
       if (error) throw error;
+      if (data.user) {
+          await supabase.from('profiles').upsert({
+              id: data.user.id, full_name: user.name, email: user.email.trim().toLowerCase(),
+              role: user.role.toLowerCase(), classname: user.className || '',
+              is_active: true, avatar_url: getInitialsAvatar(user.name)
+          });
+      }
       return data;
     },
 

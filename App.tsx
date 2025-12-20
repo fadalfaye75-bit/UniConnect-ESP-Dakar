@@ -1,6 +1,7 @@
 
 import React, { lazy, Suspense, useEffect } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+/* Unified routing imports from react-router to satisfy environment constraints */
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { ChatProvider } from './context/ChatContext';
