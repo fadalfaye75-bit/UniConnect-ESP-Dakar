@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Trash2, X, Lock, Unlock, Loader2, AlertCircle, Share2, Pencil, CalendarClock, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Activity, Users } from 'lucide-react';
+import { Plus, Trash2, X, Lock, Unlock, Loader2, AlertCircle, Share2, Pencil, CalendarClock, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Activity, Users, PieChart as PieChartIcon, Trophy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole, Poll } from '../types';
 import Modal from '../components/Modal';
 import { useNotification } from '../context/NotificationContext';
 import { API } from '../services/api';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 export default function Polls() {
   const { user, adminViewClass } = useAuth();
@@ -15,6 +15,8 @@ export default function Polls() {
   const [polls, setPolls] = useState<Poll[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isResultsModalOpen, setIsResultsModalOpen] = useState(false);
+  const [selectedPollForResults, setSelectedPollForResults] = useState<Poll | null>(null);
   
   // Edit & Form State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -29,16 +31,20 @@ export default function Polls() {
       if(showLoader) setLoading(true); 
       const data = await API.polls.list();
       setPolls(data);
+      // Update selected poll data if results modal is open
+      if (selectedPollForResults) {
+        const updated = data.find(p => p.id === selectedPollForResults.id);
+        if (updated) setSelectedPollForResults(updated);
+      }
     } catch (error) {
       addNotification({ title: 'Erreur', message: 'Impossible de charger.', type: 'alert' });
     } finally {
       if(showLoader) setLoading(false);
     }
-  }, [addNotification]);
+  }, [addNotification, selectedPollForResults]);
 
   useEffect(() => {
     fetchPolls(true);
-    // Optimized: Refresh every 2 minutes instead of 1 minute
     const interval = setInterval(() => fetchPolls(false), 120000); 
     return () => clearInterval(interval);
   }, [fetchPolls, user, adminViewClass]);
@@ -133,6 +139,11 @@ export default function Polls() {
     }
   };
 
+  const openResults = (poll: Poll) => {
+    setSelectedPollForResults(poll);
+    setIsResultsModalOpen(true);
+  };
+
   const openNewModal = () => {
     setEditingId(null);
     setQuestion('');
@@ -200,6 +211,8 @@ export default function Polls() {
       if(options.length <= 2) return;
       setOptions(options.filter((_, i) => i !== idx));
   };
+
+  const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
   if (loading) return (
     <div className="flex justify-center items-center h-[calc(100vh-200px)]">
@@ -448,16 +461,26 @@ export default function Polls() {
                 </div>
 
                 {/* Footer Info */}
-                <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-4 text-xs font-medium text-gray-500 dark:text-gray-400">
-                    <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md">
-                       <BarChart2 size={14} className="text-gray-400" />
-                       <span className="text-gray-700 dark:text-gray-300 font-bold">{totalVotes}</span> votes
+                <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 sm:gap-4 text-xs font-medium text-gray-500 dark:text-gray-400 items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md">
+                        <BarChart2 size={14} className="text-gray-400" />
+                        <span className="text-gray-700 dark:text-gray-300 font-bold">{totalVotes}</span> votes
+                        </div>
+                        {(poll.hasVoted || status === 'ended' || canManage) && (
+                            <button 
+                                onClick={() => openResults(poll)}
+                                className="flex items-center gap-1.5 text-primary-600 dark:text-primary-400 hover:underline font-bold"
+                            >
+                                <PieChartIcon size={14} /> Résultats
+                            </button>
+                        )}
                     </div>
                     {(poll.startTime || poll.endTime) && (
-                        <div className="flex items-center gap-1.5 ml-auto">
+                        <div className="flex items-center gap-1.5">
                             <CalendarClock size={14} className="text-gray-400" />
-                            <span>
-                                {poll.endTime ? `Fin le ${new Date(poll.endTime).toLocaleDateString([], {day: 'numeric', month: 'short'})} à ${new Date(poll.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` : 'Pas de date limite'}
+                            <span className="hidden sm:inline">
+                                {poll.endTime ? `Fin le ${new Date(poll.endTime).toLocaleDateString([], {day: 'numeric', month: 'short'})}` : 'Pas de limite'}
                             </span>
                         </div>
                     )}
@@ -476,6 +499,7 @@ export default function Polls() {
         )}
       </div>
 
+      {/* MODAL CREATION/EDIT */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingId ? "Modifier le sondage" : "Nouveau sondage"}>
         <form onSubmit={handleSubmit} className="space-y-5">
            <div>
@@ -542,6 +566,118 @@ export default function Polls() {
              {editingId ? 'Mettre à jour' : 'Lancer le sondage'}
            </button>
         </form>
+      </Modal>
+
+      {/* MODAL RESULTS DASHBOARD */}
+      <Modal 
+        isOpen={isResultsModalOpen} 
+        onClose={() => setIsResultsModalOpen(false)} 
+        title="Tableau de bord des résultats"
+      >
+        {selectedPollForResults && (
+          <div className="space-y-8 animate-in fade-in zoom-in-95 duration-300">
+             {/* Info Header */}
+             <div className="bg-gray-50 dark:bg-gray-700/30 p-5 rounded-2xl border border-gray-100 dark:border-gray-700">
+                <h4 className="text-xl font-black text-gray-900 dark:text-white leading-tight mb-2">
+                    {selectedPollForResults.question}
+                </h4>
+                <div className="flex flex-wrap gap-4 mt-4">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-600">
+                        <Users size={16} className="text-primary-500" />
+                        <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                            {selectedPollForResults.totalVotes} <span className="text-gray-400 font-medium">participations</span>
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-600">
+                        <Trophy size={16} className="text-yellow-500" />
+                        <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                            Option en tête : <span className="text-primary-600">
+                                {[...selectedPollForResults.options].sort((a,b) => b.votes - a.votes)[0]?.label || '-'}
+                            </span>
+                        </span>
+                    </div>
+                </div>
+             </div>
+
+             {/* Chart Visualization */}
+             <div className="flex flex-col items-center">
+                 <div className="h-[280px] w-full relative">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                            <Pie
+                                data={selectedPollForResults.options}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={70}
+                                outerRadius={100}
+                                paddingAngle={5}
+                                dataKey="votes"
+                                nameKey="label"
+                                animationBegin={0}
+                                animationDuration={1500}
+                            >
+                                {selectedPollForResults.options.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} strokeWidth={0} />
+                                ))}
+                            </Pie>
+                            <Tooltip 
+                                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                                itemStyle={{ fontWeight: 'bold' }}
+                            />
+                            <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold', paddingTop: '20px' }} />
+                        </PieChart>
+                    </ResponsiveContainer>
+                    {/* Centered Total */}
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none mt-[-10px]">
+                        <span className="text-3xl font-black text-gray-900 dark:text-white">{selectedPollForResults.totalVotes}</span>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">Votes</span>
+                    </div>
+                 </div>
+             </div>
+
+             {/* Detailed List */}
+             <div className="space-y-3">
+                <h5 className="text-xs font-bold text-gray-400 uppercase tracking-widest px-1">Répartition détaillée</h5>
+                <div className="grid gap-2">
+                    {selectedPollForResults.options.sort((a,b) => b.votes - a.votes).map((opt, idx) => {
+                        const percent = selectedPollForResults.totalVotes > 0 
+                            ? Math.round((opt.votes / selectedPollForResults.totalVotes) * 100) 
+                            : 0;
+                        return (
+                            <div key={opt.id} className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600">
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{backgroundColor: COLORS[idx % COLORS.length]}}>
+                                    {idx + 1}
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className="text-sm font-bold text-gray-800 dark:text-white">{opt.label}</span>
+                                        <span className="text-sm font-black text-primary-600">{percent}%</span>
+                                    </div>
+                                    <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                                        <div 
+                                            className="h-full rounded-full transition-all duration-1000" 
+                                            style={{ width: `${percent}%`, backgroundColor: COLORS[idx % COLORS.length] }}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-sm font-bold text-gray-900 dark:text-white">{opt.votes}</div>
+                                    <div className="text-[10px] text-gray-400 font-bold uppercase">Voix</div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+             </div>
+
+             <button 
+                onClick={() => setIsResultsModalOpen(false)}
+                className="w-full py-3 bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold rounded-xl hover:opacity-90 transition-opacity"
+             >
+                Fermer l'aperçu
+             </button>
+          </div>
+        )}
       </Modal>
     </div>
   );
