@@ -1,3 +1,4 @@
+
 import React, { lazy, Suspense, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -69,6 +70,7 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificationProvider>
+        {/* Fix: Removing 'future' prop from HashRouter because it is not supported in the provided IntrinsicAttributes & HashRouterProps type definition */}
         <HashRouter>
           <AppRoutes />
         </HashRouter>
