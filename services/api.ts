@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { supabase, supabaseUrl, supabaseKey } from './supabaseClient';
 import { User, UserRole, Announcement, Exam, ClassGroup, ActivityLog, AppNotification, Poll, MeetLink, ScheduleFile } from '../types';
 
-const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8`;
+const getInitialsAvatar = (name: string) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}&backgroundColor=0ea5e9,0284c7,0369a1,075985,38bdf8&chars=2`;
 
 // Cache avec TTL différencié
 const CACHE: Record<string, { data: any, timestamp: number, ttl: number }> = {};
@@ -240,14 +240,23 @@ export const API = {
     vote: async (pollId: string, optionId: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { error } = await supabase.rpc('vote_for_option', {
-        p_poll_id: pollId,
-        p_option_id: optionId,
-        p_user_id: user.id
+      
+      // On utilise prioritairement l'upsert pour permettre le changement de vote
+      // La contrainte d'unicité sur (poll_id, user_id) dans la table poll_votes
+      // permet de mettre à jour le option_id automatiquement.
+      const { error } = await supabase.from('poll_votes').upsert({ 
+        poll_id: pollId, 
+        user_id: user.id, 
+        option_id: optionId 
+      }, { 
+        onConflict: 'poll_id,user_id' 
       });
+
       if (error) {
-          await supabase.from('poll_votes').upsert({ poll_id: pollId, user_id: user.id, option_id: optionId }, { onConflict: 'poll_id,user_id' });
+        console.error("Erreur lors du vote:", error);
+        throw error;
       }
+      
       invalidateCache('polls_list');
     },
     create: async (p: any) => {

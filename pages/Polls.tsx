@@ -89,7 +89,7 @@ export default function Polls() {
       return 'active';
   };
 
-  const handleVote = async (pollId: string, optionId: string, status: string) => {
+  const handleVote = async (pollId: string, optionId: string, status: string, hasAlreadyVoted: boolean) => {
     if (!user) return;
     if (status !== 'active') {
        addNotification({ title: 'Vote impossible', message: 'Ce sondage n\'est pas ouvert.', type: 'warning' });
@@ -98,7 +98,8 @@ export default function Polls() {
 
     try {
       await API.polls.vote(pollId, optionId);
-      addNotification({ title: 'Vote enregistré', message: 'Merci pour votre participation.', type: 'success' });
+      const msg = hasAlreadyVoted ? 'Votre vote a été mis à jour.' : 'Merci pour votre participation.';
+      addNotification({ title: 'Vote enregistré', message: msg, type: 'success' });
       fetchPolls(false);
     } catch (error: any) {
       addNotification({ title: 'Erreur', message: 'Impossible d\'enregistrer votre vote.', type: 'alert' });
@@ -408,9 +409,17 @@ export default function Polls() {
                    </div>
                 </div>
 
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6 leading-tight pr-8">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2 leading-tight pr-8">
                     {poll.question}
                 </h3>
+                {status === 'active' && poll.hasVoted && (
+                    <p className="text-[10px] text-primary-500 font-bold mb-4 uppercase flex items-center gap-1">
+                        <Check size={12} /> Vous avez voté. Cliquez sur une option pour changer.
+                    </p>
+                )}
+                {status === 'active' && !poll.hasVoted && (
+                    <p className="text-[10px] text-gray-400 font-bold mb-4 uppercase">Exprimez-vous !</p>
+                )}
 
                 <div className="space-y-3 flex-1">
                   {poll.options.map(option => {
@@ -422,7 +431,7 @@ export default function Polls() {
                     return (
                       <button 
                         key={option.id}
-                        onClick={() => canVote && handleVote(poll.id, option.id, status)}
+                        onClick={() => canVote && handleVote(poll.id, option.id, status, poll.hasVoted)}
                         disabled={!canVote}
                         className={`relative w-full text-left rounded-xl overflow-hidden transition-all group/opt h-12
                            ${canVote ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}
