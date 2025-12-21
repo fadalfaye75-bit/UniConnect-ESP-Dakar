@@ -35,34 +35,21 @@ const mapAnnouncement = (a: any): Announcement => {
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      // 1. Authentification Supabase
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
         email: email.trim().toLowerCase(), 
         password 
       });
       
-      if (authError) {
-        // Ensure we throw a clear message
-        throw new Error(authError.message || "Identifiants invalides.");
-      }
-      
-      if (!authData.user) {
-        throw new Error("Authentification réussie mais utilisateur non trouvé.");
-      }
+      if (authError) throw new Error(authError.message || "Identifiants invalides.");
+      if (!authData.user) throw new Error("Authentification réussie mais utilisateur non trouvé.");
 
-      // 2. Récupération du profil
       const { data: profile, error: fetchError } = await supabase.from('profiles')
         .select('*')
         .eq('id', authData.user.id)
         .maybeSingle();
         
-      if (fetchError) {
-        throw new Error(`Erreur lors de la récupération du profil: ${fetchError.message}`);
-      }
-      
-      if (!profile) {
-        throw new Error("Profil non trouvé. Veuillez contacter l'administrateur pour initialiser votre compte.");
-      }
+      if (fetchError) throw new Error(`Erreur lors de la récupération du profil: ${fetchError.message}`);
+      if (!profile) throw new Error("Profil non trouvé. Veuillez contacter l'administrateur.");
       
       return mapProfileToUser(profile);
     },
@@ -172,7 +159,6 @@ export const API = {
   polls: {
     list: async (): Promise<Poll[]> => {
       const { data: { user } } = await supabase.auth.getUser();
-      // On récupère les votes pré-calculés par le trigger SQL pour la scalabilité
       const { data: polls, error } = await supabase.from('polls')
         .select('*, poll_options(id, label, votes)')
         .order('created_at', { ascending: false });
@@ -212,12 +198,34 @@ export const API = {
     },
     create: async (p: any) => {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Vous devez être connecté.");
+
+      // 1. Création du sondage
       const { data: poll, error: pollErr } = await supabase.from('polls').insert({
-          question: p.question, classname: p.className, is_active: true, creator_id: user?.id
+          question: p.question, 
+          classname: p.className, 
+          is_active: true, 
+          creator_id: user.id
       }).select().single();
-      if (pollErr) throw pollErr;
-      const options = p.options.map((o: any) => ({ poll_id: poll.id, label: o.label, votes: 0 }));
-      await supabase.from('poll_options').insert(options);
+      
+      if (pollErr) throw new Error(`Erreur sondage: ${pollErr.message}`);
+      if (!poll) throw new Error("Le sondage n'a pas pu être créé.");
+
+      // 2. Création des options
+      const options = p.options.map((o: any) => ({ 
+        poll_id: poll.id, 
+        label: o.label, 
+        votes: 0 
+      }));
+
+      const { error: optionsErr } = await supabase.from('poll_options').insert(options);
+      
+      if (optionsErr) {
+        // Optionnel: supprimer le sondage orphelin si les options échouent
+        await supabase.from('polls').delete().eq('id', poll.id);
+        throw new Error(`Erreur options: ${optionsErr.message}. Vérifiez les politiques RLS sur poll_options.`);
+      }
+
       return poll;
     },
     toggleStatus: async (id: string) => {

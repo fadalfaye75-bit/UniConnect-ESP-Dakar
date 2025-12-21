@@ -4,11 +4,12 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Megaphone, Calendar, GraduationCap, Video, 
   BarChart2, Search, LogOut, Menu, X, Moon, Sun, 
-  ShieldCheck, UserCircle, Bell, Check, Trash2, Info, AlertTriangle, Settings, Loader2, ArrowRight
+  ShieldCheck, UserCircle, Bell, Check, Trash2, Info, AlertTriangle, Settings, Loader2, ArrowRight, Filter, CalendarDays, Clock
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
 import { API } from '../services/api';
+import { AnnouncementPriority } from '../types';
 
 interface SearchResult {
   id: string;
@@ -17,10 +18,11 @@ interface SearchResult {
   subtitle?: string;
   link: string;
   date?: string;
+  priority?: AnnouncementPriority;
 }
 
 export default function Layout() {
-  const { user, logout, toggleTheme, isDarkMode, adminViewClass, setAdminViewClass } = useAuth();
+  const { user, logout, toggleTheme, isDarkMode } = useAuth();
   const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications } = useNotification();
   
   const [isSidebarOpen, setSidebarOpen] = useState(false);
@@ -28,7 +30,11 @@ export default function Layout() {
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
-  const [classesList, setClassesList] = useState<{id: string, name: string}[]>([]);
+  // New Search Filters
+  const [searchPriority, setSearchPriority] = useState<string>('all');
+  const [searchStartDate, setSearchStartDate] = useState<string>('');
+  const [searchEndDate, setSearchEndDate] = useState<string>('');
+
   const [fullData, setFullData] = useState<{
     anns: any[],
     exams: any[],
@@ -56,17 +62,11 @@ export default function Layout() {
   }, []);
 
   useEffect(() => {
-      if (user?.role === 'ADMIN') {
-          API.classes.list().then(data => setClassesList(data));
-      }
-  }, [user]);
-
-  useEffect(() => {
     if (isSearchOpen && !fullData) {
       const loadSearchData = async () => {
         try {
           const [anns, exams, meets, polls] = await Promise.all([
-            API.announcements.list(100),
+            API.announcements.list(0, 100),
             API.exams.list(),
             API.meet.list(),
             API.polls.list()
@@ -81,36 +81,75 @@ export default function Layout() {
   }, [isSearchOpen, fullData]);
 
   const searchResults = useMemo(() => {
-    if (!searchQuery.trim() || !fullData) return [];
+    if ((!searchQuery.trim() && searchPriority === 'all' && !searchStartDate && !searchEndDate) || !fullData) return [];
+    
     const query = searchQuery.toLowerCase();
     const results: SearchResult[] = [];
 
+    const isWithinDateRange = (dateStr?: string) => {
+      if (!dateStr) return true;
+      const date = new Date(dateStr);
+      if (searchStartDate) {
+        const start = new Date(searchStartDate);
+        start.setHours(0,0,0,0);
+        if (date < start) return false;
+      }
+      if (searchEndDate) {
+        const end = new Date(searchEndDate);
+        end.setHours(23,59,59,999);
+        if (date > end) return false;
+      }
+      return true;
+    };
+
     fullData.anns.forEach(a => {
-      if (a.title.toLowerCase().includes(query) || a.content.toLowerCase().includes(query)) {
-        results.push({ id: a.id, type: 'Annonce', title: a.title, subtitle: a.author, link: '/announcements', date: a.date });
+      const matchesText = !query || a.title.toLowerCase().includes(query) || a.content.toLowerCase().includes(query);
+      const matchesPriority = searchPriority === 'all' || a.priority === searchPriority;
+      const matchesDate = isWithinDateRange(a.date);
+
+      if (matchesText && matchesPriority && matchesDate) {
+        results.push({ 
+          id: a.id, 
+          type: 'Annonce', 
+          title: a.title, 
+          subtitle: a.author, 
+          link: '/announcements', 
+          date: a.date,
+          priority: a.priority
+        });
       }
     });
 
-    fullData.exams.forEach(e => {
-      if (e.subject.toLowerCase().includes(query) || e.room.toLowerCase().includes(query)) {
-        results.push({ id: e.id, type: 'Examen', title: e.subject, subtitle: `Salle ${e.room}`, link: '/exams', date: e.date });
-      }
-    });
+    // Only text and date search for other categories (priority is announcement specific)
+    if (searchPriority === 'all') {
+      fullData.exams.forEach(e => {
+        const matchesText = !query || e.subject.toLowerCase().includes(query) || e.room.toLowerCase().includes(query);
+        const matchesDate = isWithinDateRange(e.date);
+        if (matchesText && matchesDate) {
+          results.push({ id: e.id, type: 'Examen', title: e.subject, subtitle: `Salle ${e.room}`, link: '/exams', date: e.date });
+        }
+      });
 
-    fullData.meets.forEach(m => {
-      if (m.title.toLowerCase().includes(query)) {
-        results.push({ id: m.id, type: 'Visio', title: m.title, subtitle: m.platform, link: '/meet' });
-      }
-    });
+      fullData.meets.forEach(m => {
+        const matchesText = !query || m.title.toLowerCase().includes(query);
+        // Meets have weekly times like "Lundi 10h", harder to filter by absolute date range unless we parse it
+        if (matchesText) {
+          results.push({ id: m.id, type: 'Visio', title: m.title, subtitle: m.platform, link: '/meet' });
+        }
+      });
 
-    fullData.polls.forEach(p => {
-        if (p.question.toLowerCase().includes(query)) {
+      fullData.polls.forEach(p => {
+        if (!query || p.question.toLowerCase().includes(query)) {
             results.push({ id: p.id, type: 'Sondage', title: p.question, link: '/polls' });
         }
-    });
+      });
+    }
 
-    return results.slice(0, 10);
-  }, [searchQuery, fullData]);
+    return results.sort((a, b) => {
+      if (a.date && b.date) return new Date(b.date).getTime() - new Date(a.date).getTime();
+      return 0;
+    }).slice(0, 15);
+  }, [searchQuery, fullData, searchPriority, searchStartDate, searchEndDate]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.ctrlKey && e.key === 'k') {
@@ -299,47 +338,134 @@ export default function Layout() {
       </div>
 
       {isSearchOpen && (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 sm:pt-24 px-4 bg-gray-950/70 backdrop-blur-md" onClick={() => setSearchOpen(false)}>
-           <div className="w-full max-w-2xl bg-white dark:bg-gray-900 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-8 sm:pt-16 px-4 bg-gray-950/70 backdrop-blur-md overflow-hidden" onClick={() => setSearchOpen(false)}>
+           <div className="w-full max-w-3xl bg-white dark:bg-gray-900 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
+             
+             {/* Search Input Area */}
              <div className="relative border-b border-gray-50 dark:border-gray-800">
                 <Search className="absolute left-6 top-6 text-gray-400" size={24} />
                 <input 
                   autoFocus
                   type="text" 
-                  placeholder="Chercher partout..."
+                  placeholder="Rechercher par mot-clé..."
                   className="w-full py-7 pl-16 pr-6 bg-transparent text-xl font-bold text-gray-900 dark:text-white outline-none placeholder:text-gray-400"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
                 <button onClick={() => setSearchOpen(false)} className="absolute right-6 top-6 p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-all"><X size={24} /></button>
              </div>
+
+             {/* Advanced Filters */}
+             <div className="p-6 bg-gray-50/50 dark:bg-gray-800/30 border-b border-gray-100 dark:border-gray-800 space-y-4">
+                <div className="flex flex-wrap items-center gap-4">
+                   <div className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-widest whitespace-nowrap">
+                      <Filter size={14} className="text-primary-500" /> Filtres :
+                   </div>
+                   
+                   <div className="flex-1 min-w-[150px]">
+                      <select 
+                        value={searchPriority} 
+                        onChange={(e) => setSearchPriority(e.target.value)}
+                        className="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-[10px] font-black text-gray-600 dark:text-gray-300 outline-none uppercase tracking-widest cursor-pointer hover:border-primary-400"
+                      >
+                         <option value="all">Priorité (Toutes)</option>
+                         <option value="normal">Normal</option>
+                         <option value="important">Important</option>
+                         <option value="urgent">Urgent</option>
+                      </select>
+                   </div>
+
+                   <div className="flex items-center gap-2 flex-1 min-w-[280px]">
+                      <div className="relative flex-1">
+                        <CalendarDays size={12} className="absolute left-3 top-2.5 text-gray-400" />
+                        <input 
+                          type="date" 
+                          value={searchStartDate} 
+                          onChange={(e) => setSearchStartDate(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-[10px] font-bold outline-none text-gray-700 dark:text-gray-300"
+                        />
+                      </div>
+                      <span className="text-gray-300">→</span>
+                      <div className="relative flex-1">
+                        <CalendarDays size={12} className="absolute left-3 top-2.5 text-gray-400" />
+                        <input 
+                          type="date" 
+                          value={searchEndDate} 
+                          onChange={(e) => setSearchEndDate(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-[10px] font-bold outline-none text-gray-700 dark:text-gray-300"
+                        />
+                      </div>
+                   </div>
+
+                   {(searchPriority !== 'all' || searchStartDate || searchEndDate || searchQuery) && (
+                      <button 
+                        onClick={() => { setSearchPriority('all'); setSearchStartDate(''); setSearchEndDate(''); setSearchQuery(''); }}
+                        className="text-[10px] font-black text-red-500 uppercase tracking-widest hover:underline px-2"
+                      >
+                        Reset
+                      </button>
+                   )}
+                </div>
+             </div>
              
-             <div className="flex-1 overflow-y-auto p-6 bg-gray-50/30 dark:bg-gray-900/30 custom-scrollbar">
+             {/* Results Area */}
+             <div className="flex-1 overflow-y-auto p-6 bg-white dark:bg-gray-900 custom-scrollbar">
                {searchResults.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                      {searchResults.map((result) => (
-                        <button key={`${result.type}-${result.id}`} onClick={() => { setSearchOpen(false); navigate(result.link); }} className="w-full flex items-center gap-5 p-4 rounded-3xl hover:bg-white dark:hover:bg-gray-800 transition-all group text-left shadow-sm hover:shadow-xl border border-transparent hover:border-primary-100">
-                           <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110
-                              ${result.type === 'Annonce' ? 'bg-blue-50 text-blue-500' : 
-                                result.type === 'Examen' ? 'bg-orange-50 text-orange-500' : 'bg-primary-50 text-primary-500'}
+                        <button 
+                          key={`${result.type}-${result.id}`} 
+                          onClick={() => { setSearchOpen(false); navigate(result.link); }} 
+                          className="w-full flex items-center gap-5 p-4 rounded-[2rem] bg-gray-50/50 dark:bg-gray-800/40 hover:bg-white dark:hover:bg-gray-800 transition-all group text-left shadow-sm hover:shadow-xl border border-transparent hover:border-primary-100 dark:hover:border-primary-900/50"
+                        >
+                           <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110
+                              ${result.type === 'Annonce' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500' : 
+                                result.type === 'Examen' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-500' : 
+                                result.type === 'Visio' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500' :
+                                'bg-primary-50 dark:bg-primary-900/20 text-primary-500'}
                            `}>
-                              {result.type === 'Annonce' ? <Megaphone size={20} /> : result.type === 'Examen' ? <GraduationCap size={20} /> : <Search size={20} />}
+                              {result.type === 'Annonce' ? <Megaphone size={22} /> : 
+                               result.type === 'Examen' ? <GraduationCap size={22} /> : 
+                               result.type === 'Visio' ? <Video size={22} /> :
+                               <Search size={22} />}
                            </div>
+
                            <div className="flex-1 min-w-0">
-                              <h4 className="font-black text-gray-900 dark:text-white truncate group-hover:text-primary-600 transition-colors tracking-tight">{result.title}</h4>
-                              <div className="flex items-center gap-3 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mt-1">
-                                 <span className="text-primary-500">{result.type}</span>
-                                 {result.subtitle && <span className="truncate opacity-60">• {result.subtitle}</span>}
+                              <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-black text-gray-900 dark:text-white truncate group-hover:text-primary-600 transition-colors tracking-tight text-lg">{result.title}</h4>
+                                {result.priority && (
+                                  <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest border shrink-0 ${
+                                    result.priority === 'urgent' ? 'bg-red-50 text-red-600 border-red-100' :
+                                    result.priority === 'important' ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                                    'bg-primary-50 text-primary-600 border-primary-100'
+                                  }`}>
+                                    {result.priority}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest italic">
+                                 <span className="text-primary-500 flex items-center gap-1.5 font-black"><Info size={12}/> {result.type}</span>
+                                 {result.subtitle && <span className="truncate opacity-70">• {result.subtitle}</span>}
+                                 {result.date && (
+                                   <span className="flex items-center gap-1.5 opacity-70">
+                                     <Clock size={12} /> {new Date(result.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                   </span>
+                                 )}
                               </div>
                            </div>
-                           <ArrowRight size={20} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
+                           <ArrowRight size={22} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
                         </button>
                      ))}
                   </div>
                ) : (
-                  <div className="py-20 text-center text-gray-400">
+                  <div className="py-24 text-center text-gray-400">
                      <Search size={64} className="mx-auto mb-6 opacity-5" />
-                     <p className="text-sm font-bold uppercase tracking-widest italic">Aucun résultat pour "{searchQuery}"</p>
+                     <p className="text-sm font-black uppercase tracking-widest italic opacity-50">
+                        {(!searchQuery && searchPriority === 'all' && !searchStartDate && !searchEndDate) 
+                          ? "Entrez un mot-clé ou utilisez les filtres pour commencer..." 
+                          : `Aucun résultat pour ces critères.`
+                        }
+                     </p>
                   </div>
                )}
              </div>

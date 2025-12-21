@@ -108,22 +108,29 @@ export default function Polls() {
 
   const handleCreatePoll = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPoll.options.some(o => !o.trim())) {
-      addNotification({ title: 'Options vides', message: 'Remplissez toutes les options.', type: 'warning' });
+    const cleanOptions = newPoll.options.filter(o => o.trim() !== '');
+    if (cleanOptions.length < 2) {
+      addNotification({ title: 'Options insuffisantes', message: 'Veuillez entrer au moins 2 options.', type: 'warning' });
       return;
     }
+
     setSubmitting(true);
     try {
       await API.polls.create({
         question: newPoll.question,
         className: newPoll.className,
-        options: newPoll.options.map(o => ({ label: o }))
+        options: cleanOptions.map(o => ({ label: o }))
       });
       setIsModalOpen(false);
-      addNotification({ title: 'Sondage publié', message: 'Consultation ouverte.', type: 'success' });
-      fetchPolls();
-    } catch (error) {
-      addNotification({ title: 'Erreur', message: 'Création échouée.', type: 'alert' });
+      addNotification({ title: 'Sondage publié', message: 'La consultation est ouverte.', type: 'success' });
+      fetchPolls(false);
+    } catch (error: any) {
+      console.error("Erreur création sondage:", error);
+      addNotification({ 
+        title: 'Erreur de création', 
+        message: error?.message || 'Une erreur est survenue lors de l\'enregistrement.', 
+        type: 'alert' 
+      });
     } finally {
       setSubmitting(false);
     }
@@ -353,8 +360,9 @@ export default function Polls() {
                             </linearGradient>
                           ))}
                         </defs>
+                        {/* Fix: Mapping PollOption objects to literal objects to provide implicit index signature required by Recharts types */}
                         <Pie 
-                          data={selectedPollForResults.options} 
+                          data={selectedPollForResults.options.map(o => ({ ...o }))} 
                           cx="50%" cy="50%" 
                           innerRadius={70} outerRadius={100} 
                           paddingAngle={8} 
