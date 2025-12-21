@@ -35,15 +35,34 @@ const mapAnnouncement = (a: any): Announcement => {
 export const API = {
   auth: {
     login: async (email: string, password: string): Promise<User> => {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
-      if (authError) throw authError;
+      // 1. Authentification Supabase
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
+        email: email.trim().toLowerCase(), 
+        password 
+      });
       
+      if (authError) {
+        // Ensure we throw a clear message
+        throw new Error(authError.message || "Identifiants invalides.");
+      }
+      
+      if (!authData.user) {
+        throw new Error("Authentification réussie mais utilisateur non trouvé.");
+      }
+
+      // 2. Récupération du profil
       const { data: profile, error: fetchError } = await supabase.from('profiles')
         .select('*')
-        .eq('id', authData.user?.id).maybeSingle();
+        .eq('id', authData.user.id)
+        .maybeSingle();
         
-      if (fetchError) throw fetchError;
-      if (!profile) throw new Error("Profil non trouvé.");
+      if (fetchError) {
+        throw new Error(`Erreur lors de la récupération du profil: ${fetchError.message}`);
+      }
+      
+      if (!profile) {
+        throw new Error("Profil non trouvé. Veuillez contacter l'administrateur pour initialiser votre compte.");
+      }
       
       return mapProfileToUser(profile);
     },

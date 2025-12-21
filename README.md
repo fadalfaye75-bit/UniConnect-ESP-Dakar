@@ -1,14 +1,32 @@
+
 # 🎓 UniConnect - Portail ESP Dakar
 
 UniConnect est une plateforme de gestion scolaire universitaire centralisée pour l'ESP de Dakar.
 
-## 🛠 Script SQL de Configuration (Sondages & Profils)
+## 🛠 Script SQL de Configuration (Correction de la Récursion Infinie)
 
-Voici le script complet à copier et exécuter dans le **SQL Editor de Supabase** pour initialiser la base de données nécessaire au bon fonctionnement des sondages et de la gestion des accès.
+L'erreur "infinite recursion detected in policy" survient lorsque les politiques RLS d'une table interrogent cette même table. Pour corriger cela, nous utilisons des fonctions `SECURITY DEFINER` qui s'exécutent avec les privilèges du créateur (bypassant le RLS) pour récupérer les informations nécessaires.
+
+Copiez et exécutez ce script dans le **SQL Editor de Supabase** :
 
 ```sql
 -- ==========================================
--- 1. TABLE DES PROFILS (Core Identity)
+-- 1. FONCTIONS DE SÉCURITÉ (Fix Récursion)
+-- ==========================================
+-- Ces fonctions permettent de récupérer les infos de l'utilisateur courant sans boucle infinie
+
+CREATE OR REPLACE FUNCTION public.get_my_role()
+RETURNS text AS $$
+  SELECT role FROM public.profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION public.get_my_class()
+RETURNS text AS $$
+  SELECT classname FROM public.profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
+
+-- ==========================================
+-- 2. TABLE DES PROFILS
 -- ==========================================
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
@@ -25,17 +43,19 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 -- Activation RLS Profils
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+-- Politiques Profils (Simples pour éviter la récursion)
+DROP POLICY IF EXISTS "Profils visibles par tous" ON public.profiles;
 CREATE POLICY "Profils visibles par tous" ON public.profiles
-    FOR SELECT USING (true);
+    FOR SELECT TO authenticated USING (true);
 
+DROP POLICY IF EXISTS "Modification propre profil" ON public.profiles;
 CREATE POLICY "Modification propre profil" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id);
+    FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- ==========================================
--- 2. SYSTÈME DE SONDAGES
+-- 3. SYSTÈME DE SONDAGES
 -- ==========================================
 
--- Table des sondages
 CREATE TABLE IF NOT EXISTS public.polls (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     question TEXT NOT NULL,
@@ -45,7 +65,6 @@ CREATE TABLE IF NOT EXISTS public.polls (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Table des options
 CREATE TABLE IF NOT EXISTS public.poll_options (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     poll_id UUID REFERENCES public.polls(id) ON DELETE CASCADE,
@@ -54,7 +73,6 @@ CREATE TABLE IF NOT EXISTS public.poll_options (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Table des votes (Contrainte d'unicité par utilisateur/sondage)
 CREATE TABLE IF NOT EXISTS public.poll_votes (
     poll_id UUID REFERENCES public.polls(id) ON DELETE CASCADE,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -64,16 +82,8 @@ CREATE TABLE IF NOT EXISTS public.poll_votes (
 );
 
 -- ==========================================
--- 3. INDEX & PERFORMANCE
+-- 4. LOGIQUE DE SYNCHRONISATION DES VOTES
 -- ==========================================
-CREATE INDEX IF NOT EXISTS idx_polls_classname ON public.polls(classname);
-CREATE INDEX IF NOT EXISTS idx_poll_options_poll_id ON public.poll_options(poll_id);
-CREATE INDEX IF NOT EXISTS idx_poll_votes_user_id ON public.poll_votes(user_id);
-
--- ==========================================
--- 4. LOGIQUE ATOMIQUE (Trigger de votes)
--- ==========================================
--- Maintient le compteur de votes synchronisé sans requêtes COUNT lourdes
 CREATE OR REPLACE FUNCTION public.handle_poll_vote_sync()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -103,26 +113,26 @@ ALTER TABLE public.polls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.poll_options ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.poll_votes ENABLE ROW LEVEL SECURITY;
 
--- Sondages : Visibles si publics, ou pour la classe, ou si admin/délégué
+-- Sondages : Utilisation des fonctions sécurisées pour éviter la récursion
+DROP POLICY IF EXISTS "Lecture Sondages" ON public.polls;
 CREATE POLICY "Lecture Sondages" ON public.polls
 FOR SELECT TO authenticated
 USING (
     classname = 'Général' OR 
-    classname = (SELECT classname FROM public.profiles WHERE id = auth.uid()) OR
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'delegate'))
+    classname = get_my_class() OR
+    get_my_role() IN ('admin', 'delegate')
 );
 
--- Sondages : Modification par Admin et Délégués uniquement
+DROP POLICY IF EXISTS "Gestion Sondages" ON public.polls;
 CREATE POLICY "Gestion Sondages" ON public.polls
 FOR ALL TO authenticated
-USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin', 'delegate')));
+USING (get_my_role() IN ('admin', 'delegate'));
 
--- Options : Lecture ouverte
-CREATE POLICY "Lecture Options" ON public.poll_options
-FOR SELECT TO authenticated
-USING (true);
+-- Options & Votes
+DROP POLICY IF EXISTS "Lecture Options" ON public.poll_options;
+CREATE POLICY "Lecture Options" ON public.poll_options FOR SELECT TO authenticated USING (true);
 
--- Votes : Insertion uniquement pour soi-même et sur sondage actif
+DROP POLICY IF EXISTS "Action de Voter" ON public.poll_votes;
 CREATE POLICY "Action de Voter" ON public.poll_votes
 FOR INSERT TO authenticated
 WITH CHECK (
@@ -130,13 +140,13 @@ WITH CHECK (
     EXISTS (SELECT 1 FROM public.polls WHERE id = poll_id AND is_active = true)
 );
 
--- Votes : Lecture de ses propres choix
+DROP POLICY IF EXISTS "Lecture propre vote" ON public.poll_votes;
 CREATE POLICY "Lecture propre vote" ON public.poll_votes
-FOR SELECT TO authenticated
-USING (auth.uid() = user_id);
+FOR SELECT TO authenticated USING (auth.uid() = user_id);
 ```
 
 ## 🛠 Configuration Supabase
 1. Créez un projet sur [Supabase](https://supabase.com).
 2. Copiez l'URL et la clé ANON dans `services/supabaseClient.ts`.
-3. Désactivez **"Confirm Email"** dans *Authentication > Settings* pour faciliter les tests.
+3. Désactivez **"Confirm Email"** dans *Authentication > Settings*.
+4. **IMPORTANT** : Exécutez le script SQL ci-dessus pour initialiser les tables et les fonctions de sécurité.

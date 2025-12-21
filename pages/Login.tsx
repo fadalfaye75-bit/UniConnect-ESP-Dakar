@@ -26,15 +26,27 @@ export default function Login() {
       
       let message = "Une erreur est survenue lors de la connexion.";
       
-      // Extraction robuste du message d'erreur de Supabase
-      if (err?.error_description) {
-        message = err.error_description;
-      } else if (err?.message) {
-        message = err.message;
-      } else if (typeof err === 'string') {
+      // Extraction robuste du message d'erreur
+      if (typeof err === 'string') {
         message = err;
-      } else if (err?.error?.message) {
+      } else if (err?.error_description) {
+        message = err.error_description;
+      } else if (err?.message && typeof err.message === 'string') {
+        message = err.message;
+      } else if (err?.error?.message && typeof err.error.message === 'string') {
         message = err.error.message;
+      } else if (err?.statusText) {
+        message = `Erreur ${err.status || ''}: ${err.statusText}`;
+      } else {
+        // Fallback for objects that don't have standard error properties
+        try {
+          const stringified = JSON.stringify(err);
+          if (stringified !== '{}') {
+            message = `Erreur technique: ${stringified}`;
+          }
+        } catch (e) {
+          message = "Une erreur inconnue est survenue.";
+        }
       }
 
       // Traductions conviviales pour l'utilisateur
@@ -46,6 +58,8 @@ export default function Login() {
         setError("Problème de configuration serveur (Erreur RLS). Contactez l'administrateur.");
       } else if (message.includes("User not found")) {
         setError("Aucun compte associé à cet email.");
+      } else if (message.includes("Profil non trouvé")) {
+        setError("Votre compte existe mais votre profil n'a pas été initialisé. Contactez l'administrateur.");
       } else {
         setError(message);
       }
@@ -75,7 +89,7 @@ export default function Login() {
         {error && (
           <div className="mb-6 p-4 bg-red-50 text-red-600 text-sm rounded-xl flex items-center gap-3 border border-red-100 animate-in fade-in slide-in-from-top-1">
             <AlertCircle size={18} className="flex-shrink-0" /> 
-            <span className="flex-1 font-medium">{error}</span>
+            <span className="flex-1 font-medium break-words">{error}</span>
           </div>
         )}
         
