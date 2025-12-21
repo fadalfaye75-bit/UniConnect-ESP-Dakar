@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Trash2, X, Lock, Unlock, Loader2, Pencil, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Users, Search, Vote, AlertTriangle, Sparkles, Filter, FilterX, Shield, Award } from 'lucide-react';
+import { Plus, Trash2, X, Lock, Unlock, Loader2, Pencil, Timer, Clock, CheckCircle2, BarChart2, Check, TrendingUp, Users, Search, Vote, AlertTriangle, Sparkles, Filter, FilterX, Shield, Award, Calendar } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole, Poll, ClassGroup } from '../types';
 import Modal from '../components/Modal';
@@ -21,13 +21,15 @@ export default function Polls() {
   const [submitting, setSubmitting] = useState(false);
   
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'closed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'closed' | 'scheduled'>('all');
   const [classFilter, setClassFilter] = useState<string>('all');
 
   const [newPoll, setNewPoll] = useState({
     question: '',
     className: '',
-    options: ['', '']
+    options: ['', ''],
+    startTime: '',
+    endTime: ''
   });
 
   const canManage = user?.role === UserRole.ADMIN || user?.role === UserRole.DELEGATE;
@@ -55,12 +57,15 @@ export default function Polls() {
     setNewPoll({
       question: '',
       className: user?.role === UserRole.DELEGATE ? user.className : 'Général',
-      options: ['', '']
+      options: ['', ''],
+      startTime: '',
+      endTime: ''
     });
     setIsModalOpen(true);
   };
 
   const displayedPolls = useMemo(() => {
+    const now = new Date();
     return polls.filter(poll => {
       const target = poll.className || 'Général';
       const isVisible = user?.role === UserRole.ADMIN 
@@ -68,18 +73,49 @@ export default function Polls() {
         : (target === user?.className || target === 'Général');
       
       if (!isVisible) return false;
+
+      const pollStart = poll.startTime ? new Date(poll.startTime) : null;
+      const pollEnd = poll.endTime ? new Date(poll.endTime) : null;
+      
+      const isActuallyActive = poll.isActive && 
+        (!pollStart || now >= pollStart) && 
+        (!pollEnd || now <= pollEnd);
+      
+      const isScheduled = poll.isActive && pollStart && now < pollStart;
+      const isClosed = !poll.isActive || (pollEnd && now > pollEnd);
+
       const matchesClassFilter = classFilter === 'all' || target === classFilter;
       const matchesSearch = poll.question.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || 
-                           (statusFilter === 'active' && poll.isActive) ||
-                           (statusFilter === 'closed' && !poll.isActive);
+      
+      let matchesStatus = true;
+      if (statusFilter === 'active') matchesStatus = isActuallyActive;
+      else if (statusFilter === 'closed') matchesStatus = isClosed;
+      else if (statusFilter === 'scheduled') matchesStatus = isScheduled;
 
       return matchesClassFilter && matchesSearch && matchesStatus;
-    }).sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
+    }).sort((a, b) => {
+        const aStart = a.startTime ? new Date(a.startTime).getTime() : 0;
+        const bStart = b.startTime ? new Date(b.startTime).getTime() : 0;
+        return bStart - aStart;
+    });
   }, [user, polls, searchTerm, statusFilter, classFilter]);
 
   const handleVote = async (poll: Poll, optionId: string) => {
-    if (!user || !poll.isActive) return;
+    if (!user) return;
+    
+    const now = new Date();
+    const pollStart = poll.startTime ? new Date(poll.startTime) : null;
+    const pollEnd = poll.endTime ? new Date(poll.endTime) : null;
+    
+    const isActuallyActive = poll.isActive && 
+      (!pollStart || now >= pollStart) && 
+      (!pollEnd || now <= pollEnd);
+
+    if (!isActuallyActive) {
+        addNotification({ title: 'Vote impossible', message: 'Ce sondage est programmé ou expiré.', type: 'warning' });
+        return;
+    }
+
     const isConcerned = poll.className === 'Général' || poll.className === user.className;
     if (!isConcerned && user.role !== UserRole.ADMIN) {
         addNotification({ title: 'Accès restreint', message: 'Vous ne pouvez voter que pour votre classe.', type: 'warning' });
@@ -119,16 +155,17 @@ export default function Polls() {
       await API.polls.create({
         question: newPoll.question,
         className: newPoll.className,
-        options: cleanOptions.map(o => ({ label: o }))
+        options: cleanOptions.map(o => ({ label: o })),
+        startTime: newPoll.startTime,
+        endTime: newPoll.endTime
       });
       setIsModalOpen(false);
-      addNotification({ title: 'Sondage publié', message: 'La consultation est ouverte.', type: 'success' });
+      addNotification({ title: 'Sondage publié', message: 'La programmation est enregistrée.', type: 'success' });
       fetchPolls(false);
     } catch (error: any) {
-      console.error("Erreur création sondage:", error);
       addNotification({ 
         title: 'Erreur de création', 
-        message: error?.message || 'Une erreur est survenue lors de l\'enregistrement.', 
+        message: error?.message || 'Une erreur est survenue.', 
         type: 'alert' 
       });
     } finally {
@@ -156,11 +193,11 @@ export default function Polls() {
   };
 
   const COLOR_PALETTE = [
-    { start: '#0ea5e9', end: '#38bdf8' }, // Bleu
-    { start: '#10b981', end: '#34d399' }, // Émeraude
-    { start: '#f59e0b', end: '#fbbf24' }, // Ambre
-    { start: '#f43f5e', end: '#fb7185' }, // Rose/Rouge
-    { start: '#8b5cf6', end: '#a78bfa' }, // Violet
+    { start: '#0ea5e9', end: '#38bdf8' },
+    { start: '#10b981', end: '#34d399' },
+    { start: '#f59e0b', end: '#fbbf24' },
+    { start: '#f43f5e', end: '#fb7185' },
+    { start: '#8b5cf6', end: '#a78bfa' },
   ];
 
   const winnerOption = useMemo(() => {
@@ -198,6 +235,17 @@ export default function Polls() {
                 className="w-full pl-12 pr-4 py-3.5 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-2xl text-sm outline-none focus:ring-4 focus:ring-primary-50 transition-all font-medium"
              />
            </div>
+           
+           <select 
+             value={statusFilter} 
+             onChange={e => setStatusFilter(e.target.value as any)}
+             className="px-4 py-3.5 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-2xl text-xs font-black text-gray-600 dark:text-gray-300 outline-none cursor-pointer uppercase tracking-widest"
+           >
+              <option value="all">Statut (Tous)</option>
+              <option value="active">En cours</option>
+              <option value="scheduled">Programmés</option>
+              <option value="closed">Terminés</option>
+           </select>
 
            {canManage && (
              <button onClick={openCreateModal} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-6 py-3.5 rounded-2xl text-xs font-black shadow-xl shadow-primary-500/20 transition-all active:scale-95 uppercase tracking-widest">
@@ -213,18 +261,31 @@ export default function Polls() {
             const hasVoted = poll.hasVoted;
             const isConcerned = poll.className === 'Général' || poll.className === user?.className;
             
+            const now = new Date();
+            const pollStart = poll.startTime ? new Date(poll.startTime) : null;
+            const pollEnd = poll.endTime ? new Date(poll.endTime) : null;
+            const isActuallyActive = poll.isActive && (!pollStart || now >= pollStart) && (!pollEnd || now <= pollEnd);
+            const isScheduled = poll.isActive && pollStart && now < pollStart;
+            const isExpired = pollEnd && now > pollEnd;
+
             return (
               <div key={poll.id} className="bg-white dark:bg-gray-900 rounded-[3rem] p-10 shadow-soft border border-gray-100 dark:border-gray-800 transition-all flex flex-col relative overflow-hidden group hover:border-primary-400">
                 <div className="flex justify-between items-center mb-8 relative z-10">
-                   <div className="flex items-center gap-2">
-                      <div className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${poll.isActive ? 'bg-green-500 text-white' : 'bg-gray-400 text-white'}`}>
-                        {poll.isActive ? <><Timer size={12} /> Ouvert</> : <><Lock size={12} /> Clos</>}
+                   <div className="flex items-center gap-2 flex-wrap">
+                      <div className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${
+                        isActuallyActive ? 'bg-green-500 text-white' : 
+                        isScheduled ? 'bg-blue-500 text-white' : 
+                        'bg-gray-400 text-white'
+                      }`}>
+                        {isActuallyActive ? <><Timer size={12} /> Ouvert</> : 
+                         isScheduled ? <><Calendar size={12} /> Programmé</> : 
+                         <><Lock size={12} /> Clos</>}
                       </div>
                       <span className="text-[8px] font-black text-gray-400 uppercase tracking-[0.2em] border border-gray-100 dark:border-gray-800 px-3 py-1.5 rounded-full">{poll.className || 'Général'}</span>
                    </div>
                    {canManage && (
                         <div className="flex gap-2">
-                            <button onClick={() => handleToggleStatus(poll)} className="p-2.5 bg-gray-50 dark:bg-gray-800 text-gray-500 hover:text-primary-500 rounded-xl transition-colors">
+                            <button onClick={() => handleToggleStatus(poll)} className="p-2.5 bg-gray-50 dark:bg-gray-800 text-gray-500 hover:text-primary-500 rounded-xl transition-colors" title="Désactiver manuellement">
                                 {poll.isActive ? <Lock size={18} /> : <Unlock size={18} />}
                             </button>
                             <button onClick={() => handleDelete(poll.id)} className="p-2.5 bg-gray-50 dark:bg-gray-800 text-gray-500 hover:text-red-500 rounded-xl transition-colors">
@@ -240,7 +301,7 @@ export default function Polls() {
                   {poll.options.map(option => {
                     const percentage = totalVotes > 0 ? Math.round((option.votes / totalVotes) * 100) : 0;
                     const isSelected = poll.userVoteOptionId === option.id;
-                    const canVote = poll.isActive && !hasVoted && isConcerned;
+                    const canVote = isActuallyActive && !hasVoted && isConcerned;
                     
                     return (
                       <button 
@@ -249,7 +310,7 @@ export default function Polls() {
                         disabled={!canVote} 
                         className={`relative w-full text-left rounded-[2rem] overflow-hidden transition-all h-16 border-2 flex items-center px-6 ${
                           isSelected ? 'border-primary-500 bg-primary-50/10' : 'border-gray-100 dark:border-gray-800'
-                        }`}
+                        } ${!canVote ? 'cursor-default' : 'hover:border-primary-300'}`}
                       >
                          <div className={`absolute left-0 top-0 bottom-0 transition-all duration-1000 ${isSelected ? 'bg-primary-500/20' : 'bg-gray-50 dark:bg-gray-800/40'}`} style={{ width: `${percentage}%` }} />
                          <div className="flex-1 flex items-center justify-between z-10 relative">
@@ -264,7 +325,12 @@ export default function Polls() {
                   })}
                 </div>
 
-                <div className="mt-10 pt-8 border-t border-gray-50 dark:border-gray-800 flex items-center justify-between relative z-10">
+                <div className="mt-8 mb-10 text-[9px] font-bold text-gray-400 italic flex flex-col gap-1">
+                   {pollStart && <span>Début : {new Date(pollStart).toLocaleString()}</span>}
+                   {pollEnd && <span className={isExpired ? "text-red-500" : ""}>Fin : {new Date(pollEnd).toLocaleString()} {isExpired && "(Expiré)"}</span>}
+                </div>
+
+                <div className="pt-8 border-t border-gray-50 dark:border-gray-800 flex items-center justify-between relative z-10">
                     <div className="flex flex-col">
                         <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{totalVotes} VOTES</span>
                         <span className="text-[9px] font-black text-primary-500 uppercase tracking-widest mt-1">CIBLE : {poll.className || "L'école"}</span>
@@ -283,11 +349,22 @@ export default function Polls() {
           <div>
             <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Question</label>
             <textarea 
-              required rows={3} value={newPoll.question}
+              required rows={2} value={newPoll.question}
               onChange={e => setNewPoll({...newPoll, question: e.target.value})}
-              placeholder="Question du sondage..."
+              placeholder="Sujet de consultation..."
               className="w-full px-5 py-4 rounded-2xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-bold outline-none focus:ring-4 focus:ring-primary-50 transition-all italic"
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+             <div>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Date de début</label>
+                <input type="datetime-local" value={newPoll.startTime} onChange={e => setNewPoll({...newPoll, startTime: e.target.value})} className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-[10px] font-black outline-none" />
+             </div>
+             <div>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Date de fin</label>
+                <input type="datetime-local" value={newPoll.endTime} onChange={e => setNewPoll({...newPoll, endTime: e.target.value})} className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-[10px] font-black outline-none" />
+             </div>
           </div>
 
           {user?.role === UserRole.ADMIN ? (
@@ -307,7 +384,6 @@ export default function Polls() {
                <p className="text-[10px] font-black text-primary-600 uppercase tracking-widest flex items-center gap-2">
                   <Shield size={14} /> Publication pour : {user?.className}
                </p>
-               <p className="text-[9px] text-primary-500/60 mt-1 italic">En tant que délégué, vos sondages sont réservés à votre classe.</p>
             </div>
           )}
 
@@ -341,7 +417,7 @@ export default function Polls() {
 
           <button type="submit" disabled={submitting} className="w-full bg-primary-500 hover:bg-primary-600 text-white font-black py-4 rounded-2xl shadow-xl shadow-primary-500/20 transition-all flex justify-center items-center gap-2 uppercase tracking-widest">
             {submitting ? <Loader2 className="animate-spin" /> : <Vote size={20} />}
-            {submitting ? 'Publication...' : 'Ouvrir le vote'}
+            {submitting ? 'Publication...' : 'Programmer la consultation'}
           </button>
         </form>
       </Modal>
@@ -360,7 +436,6 @@ export default function Polls() {
                             </linearGradient>
                           ))}
                         </defs>
-                        {/* Fix: Mapping PollOption objects to literal objects to provide implicit index signature required by Recharts types */}
                         <Pie 
                           data={selectedPollForResults.options.map(o => ({ ...o }))} 
                           cx="50%" cy="50%" 
@@ -423,9 +498,9 @@ export default function Polls() {
                       <p className="text-3xl font-black text-gray-900 dark:text-white leading-none mt-1">{selectedPollForResults.totalVotes}</p>
                    </div>
                    <div className="text-right">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Statut</p>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Statut actuel</p>
                       <p className={`text-xs font-black uppercase mt-1 ${selectedPollForResults.isActive ? 'text-green-500' : 'text-gray-500'}`}>
-                         {selectedPollForResults.isActive ? 'En cours' : 'Clôturé'}
+                         {selectedPollForResults.isActive ? 'Actif' : 'Clôturé'}
                       </p>
                    </div>
                 </div>

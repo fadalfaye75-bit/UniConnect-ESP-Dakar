@@ -5,7 +5,7 @@ UniConnect est une plateforme de gestion scolaire universitaire centralisée pou
 
 ## 🗳️ SQL : Module Sondages (À copier dans Supabase)
 
-Exécutez ce bloc pour activer les sondages. Il inclut les tables, le compteur automatique et les droits d'accès.
+Exécutez ce bloc pour activer les sondages avec programmation automatique.
 
 ```sql
 -- 1. FONCTIONS DE REQUÊTE SÉCURISÉES (Indispensable pour le RLS)
@@ -18,12 +18,14 @@ CREATE OR REPLACE FUNCTION public.get_my_class() RETURNS text AS $$
 $$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
 
 
--- 2. TABLES DU MODULE SONDAGES
+-- 2. TABLES DU MODULE SONDAGES (Mis à jour avec dates de programmation)
 CREATE TABLE IF NOT EXISTS public.polls (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     question TEXT NOT NULL,
     classname TEXT DEFAULT 'Général',
     is_active BOOLEAN DEFAULT true,
+    start_time TIMESTAMP WITH TIME ZONE,
+    end_time TIMESTAMP WITH TIME ZONE,
     creator_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
@@ -83,7 +85,7 @@ DROP POLICY IF EXISTS "Gestion Sondages" ON public.polls;
 CREATE POLICY "Gestion Sondages" ON public.polls FOR ALL TO authenticated
 USING (get_my_role() IN ('admin', 'delegate'));
 
--- Politiques pour 'poll_options' (Crucial pour la création)
+-- Politiques pour 'poll_options'
 DROP POLICY IF EXISTS "Lecture Options" ON public.poll_options;
 CREATE POLICY "Lecture Options" ON public.poll_options FOR SELECT TO authenticated USING (true);
 
@@ -102,10 +104,3 @@ WITH CHECK (
 DROP POLICY IF EXISTS "Lecture propre vote" ON public.poll_votes;
 CREATE POLICY "Lecture propre vote" ON public.poll_votes FOR SELECT TO authenticated USING (auth.uid() = user_id);
 ```
-
-### Notes d'installation
-1. Allez dans l'onglet **SQL Editor** de Supabase.
-2. Cliquez sur **New Query**.
-3. Collez le script ci-dessus.
-4. Cliquez sur **Run**.
-5. Vérifiez que les tables `polls`, `poll_options` et `poll_votes` sont apparues dans le schéma `public`.

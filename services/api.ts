@@ -176,6 +176,7 @@ export const API = {
         const userVote = userVotes.find(v => v.poll_id === p.id);
         return {
           id: p.id, question: p.question, className: p.classname, isActive: p.is_active,
+          startTime: p.start_time, endTime: p.end_time,
           options, totalVotes: options.reduce((acc: number, o: any) => acc + o.votes, 0),
           hasVoted: !!userVote, userVoteOptionId: userVote?.option_id
         };
@@ -205,6 +206,8 @@ export const API = {
           question: p.question, 
           classname: p.className, 
           is_active: true, 
+          start_time: p.startTime || null,
+          end_time: p.endTime || null,
           creator_id: user.id
       }).select().single();
       
@@ -221,9 +224,8 @@ export const API = {
       const { error: optionsErr } = await supabase.from('poll_options').insert(options);
       
       if (optionsErr) {
-        // Optionnel: supprimer le sondage orphelin si les options échouent
         await supabase.from('polls').delete().eq('id', poll.id);
-        throw new Error(`Erreur options: ${optionsErr.message}. Vérifiez les politiques RLS sur poll_options.`);
+        throw new Error(`Erreur options: ${optionsErr.message}`);
       }
 
       return poll;
